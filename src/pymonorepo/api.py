@@ -1,48 +1,12 @@
 """The main entry module for the PyMonorepo build API."""
+import ast
 import typing as t
-from collections.abc import MutableMapping
 from pathlib import Path
 
-from pymonorepo.wheel import WheelZip, write_wheel
+from pymonorepo.pep621 import Author
 
-try:
-    import tomllib
-except ImportError:
-    import tomli as tomllib
-
-from .pep621 import parse as parse_project
-
-
-def read_pyproject_toml(path: Path) -> t.Dict[str, t.Any]:
-    """Read the pyproject.toml file.
-
-    :returns: The contents of the pyproject.toml file.
-    """
-    return tomllib.loads(path.read_text("utf-8"))  # type: ignore[no-any-return]
-
-
-class Modules(MutableMapping[str, Path]):
-    """A mapping of module name to path, does not allow overrides"""
-
-    def __init__(self) -> None:
-        self._data: t.Dict[str, Path] = {}
-
-    def __getitem__(self, key: str) -> Path:
-        return self._data[key]
-
-    def __setitem__(self, key: str, value: Path) -> None:
-        if key in self._data:
-            raise KeyError(f"Duplicate module: {key!r}")
-        self._data[key] = value
-
-    def __delitem__(self, key: str) -> None:
-        del self._data[key]
-
-    def __iter__(self) -> t.Iterator[str]:
-        return iter(self._data)
-
-    def __len__(self) -> int:
-        return len(self._data)
+from .pyproject import parse_pyproject_toml
+from .wheel import WheelZip, write_wheel
 
 
 def build_wheel(
@@ -62,33 +26,51 @@ def build_wheel(
 
     :returns: The basename (not the full path) of the .whl file it creates, as a unicode string.
     """
-    # parse and validate the project configuration
-    metadata = read_pyproject_toml(root.joinpath("pyproject.toml"))
-    _result = parse_project(metadata, root)
-    if _result.errors:
-        raise RuntimeError(
-            "Error(s) parsing pyproject.toml:\n%s"
-            % "\n".join(f"[{e.key}]:{e.etype}: {e.msg}" for e in _result.errors)
-        )
-    project = _result.data
-    if project.get("dynamic", []):
-        # TODO allow for reading of dynamic version
-        raise RuntimeError("pyproject.toml [project.dynamic] not supported")
+    metadata = parse_pyproject_toml(root)
+    project = metadata["project"]
+    tool = metadata["tool"]
 
-    # add possible named module
-    module_name = project["name"].replace("-", "_")
-    modules = Modules()
+    # if "projects" in tool, then we are in a workspace otherswise we are in a project
+    if "projects" in tool:
+        # TODO handle workspace
+        # collate all dependencies, requires-python, entrypoints
+        raise NotImplementedError("Workspaces not yet implemented")
+
+    # add module
+    module_name = tool.get("module", project["name"].replace("-", "_"))
+    module_path = None
     for rpath in [root, root / "src"]:
         for mpath in [rpath / module_name, rpath / (module_name + ".py")]:
             if mpath.exists():
-                modules[module_name] = mpath
+                if module_path is not None:
+                    raise RuntimeError(
+                        f"Multiple possible module paths found: {module_path}, {mpath}"
+                    )
+                module_path = mpath
+    if module_path is None:
+        raise RuntimeError(f"Could not find module path for {module_name!r}")
+
+    # find dynamic keys, raise if any unsatisfied
+    if "dynamic" in project:
+        if "about" in tool:
+            mod_info = read_ast_info(tool["about"])
+        if module_path.is_dir():
+            mod_info = read_ast_info(module_path / "__init__.py")
+        else:
+            mod_info = read_ast_info(module_path)
+        missing = set(project["dynamic"]) - set(mod_info)  # type: ignore
+        if missing:
+            raise RuntimeError(f"Dynamic keys {missing} not found: {root}")
+        for dynamic_key, dynamic_value in mod_info.items():
+            if dynamic_key in project["dynamic"]:
+                project[dynamic_key] = dynamic_value  # type: ignore
 
     # write the wheel
     wheel_path = wheel_directory.joinpath(
         f"{project['name']}-{project['version']}-py3-none-any.whl"
     )
     with WheelZip(wheel_path) as wheel:
-        write_wheel(wheel, project, modules, editable=editable)
+        write_wheel(wheel, project, {module_name: module_path}, editable=editable)
 
     return wheel_path.name
 
@@ -108,3 +90,46 @@ def build_sdist(
     """
     # TODO sdist
     raise NotImplementedError("sdist not yet implemented")
+
+
+class AstInfo(t.TypedDict, total=False):
+    """The information that can be read from a python file."""
+
+    description: str
+    version: str
+    authors: t.List[Author]
+
+
+def read_ast_info(path: Path) -> AstInfo:
+    """Read information from a python file."""
+    if not path.exists():
+        raise FileNotFoundError(path)
+    # read as bytes to enable custom encodings
+    with path.open("rb") as f:
+        node = ast.parse(f.read())
+    data: t.Dict[str, t.Any] = {}
+    docstring = ast.get_docstring(node)
+    if docstring:
+        data["description"] = docstring
+    for child in node.body:
+        # Only use if it's a simple string assignment
+        if not (isinstance(child, ast.Assign) and isinstance(child.value, ast.Str)):
+            continue
+        for variable, key in (
+            ("__version__", "version"),
+            ("__author__", "name"),
+            ("__email__", "email"),
+        ):
+            if any(
+                isinstance(target, ast.Name) and target.id == variable
+                for target in child.targets
+            ):
+                data[key] = child.value.s
+    author = {}
+    if "name" in data:
+        author["name"] = data.pop("name")
+    if "email" in data:
+        author["email"] = data.pop("email")
+    if author:
+        data["authors"] = [author]
+    return t.cast(AstInfo, data)

@@ -5,8 +5,7 @@ backend-path = ["src"]
 
 [project]
 name = "pymonorepo"
-version = "0.0.1"
-description = "..."
+dynamic = ["version", "description"]
 authors = [{name = "Chris Sewell", email = "chrisj_sewell@hotmail.com"}]
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -21,7 +20,7 @@ Home = "https://github.com/chrisjsewell/pymonorepo"
 pymonorepo = "pymonorepo:main"
 
 [tool.pymonorepo]
-projects = ["src/pymonorepo"]
+# projects = ["src/*"]
 
 [tool.ruff]
 line-length = 100

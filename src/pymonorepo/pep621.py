@@ -129,6 +129,7 @@ def parse(data: t.Dict[str, t.Any], root: Path) -> ParseResult:
 
     # validate dynamic
     if "dynamic" in project:
+        output["dynamic"] = []
         if not isinstance(project["dynamic"], list):
             errors.append(VError("project.dynamic", "type", "must be an array"))
         else:
