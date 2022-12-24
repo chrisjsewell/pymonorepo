@@ -19,8 +19,11 @@ Home = "https://github.com/chrisjsewell/pymonorepo"
 [project.scripts]
 pymonorepo = "pymonorepo:main"
 
-[tool.pymonorepo]
-# projects = ["src/*"]
+# [tool.monorepo.package]
+# module = "pymonorepo"
+# about = "src/pymonorepo/__about__.py"
+# [tool.monorepo.workspace]
+# packages = ["packages/*"]
 
 [tool.ruff]
 line-length = 100

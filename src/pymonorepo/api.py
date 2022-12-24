@@ -27,17 +27,19 @@ def build_wheel(
     :returns: The basename (not the full path) of the .whl file it creates, as a unicode string.
     """
     metadata = parse_pyproject_toml(root)
-    project = metadata["project"]
-    tool = metadata["tool"]
+    proj_config = metadata["project"]
+    tool_config = metadata["tool"]
 
     # if "projects" in tool, then we are in a workspace otherswise we are in a project
-    if "projects" in tool:
+    if "workspace" in tool_config:
         # TODO handle workspace
         # collate all dependencies, requires-python, entrypoints
         raise NotImplementedError("Workspaces not yet implemented")
 
+    pkg_config = tool_config.get("package", {})
+
     # add module
-    module_name = tool.get("module", project["name"].replace("-", "_"))
+    module_name = pkg_config.get("module", proj_config["name"].replace("-", "_"))
     module_path = None
     for rpath in [root, root / "src"]:
         for mpath in [rpath / module_name, rpath / (module_name + ".py")]:
@@ -51,26 +53,26 @@ def build_wheel(
         raise RuntimeError(f"Could not find module path for {module_name!r}")
 
     # find dynamic keys, raise if any unsatisfied
-    if "dynamic" in project:
-        if "about" in tool:
-            mod_info = read_ast_info(tool["about"])
+    if "dynamic" in proj_config:
+        if "about" in pkg_config:
+            mod_info = read_ast_info(pkg_config["about"])
         if module_path.is_dir():
             mod_info = read_ast_info(module_path / "__init__.py")
         else:
             mod_info = read_ast_info(module_path)
-        missing = set(project["dynamic"]) - set(mod_info)  # type: ignore
+        missing = set(proj_config["dynamic"]) - set(mod_info)  # type: ignore
         if missing:
             raise RuntimeError(f"Dynamic keys {missing} not found: {root}")
         for dynamic_key, dynamic_value in mod_info.items():
-            if dynamic_key in project["dynamic"]:
-                project[dynamic_key] = dynamic_value  # type: ignore
+            if dynamic_key in proj_config["dynamic"]:
+                proj_config[dynamic_key] = dynamic_value  # type: ignore
 
     # write the wheel
     wheel_path = wheel_directory.joinpath(
-        f"{project['name']}-{project['version']}-py3-none-any.whl"
+        f"{proj_config['name']}-{proj_config['version']}-py3-none-any.whl"
     )
     with WheelZip(wheel_path) as wheel:
-        write_wheel(wheel, project, {module_name: module_path}, editable=editable)
+        write_wheel(wheel, proj_config, {module_name: module_path}, editable=editable)
 
     return wheel_path.name
 

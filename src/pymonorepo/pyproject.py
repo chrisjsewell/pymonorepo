@@ -10,7 +10,7 @@ except ImportError:
 from .pep621 import ProjectData, VError
 from .pep621 import parse as parse_project
 
-TOOL_SECTION = "pymonorepo"
+TOOL_SECTION = "monorepo"
 
 
 def read_pyproject_toml(path: Path) -> t.Dict[str, t.Any]:
@@ -52,12 +52,24 @@ def parse_pyproject_toml(root: Path) -> PyMetadata:
 class ToolMetadata(t.TypedDict, total=False):
     """The parsed tool configuration."""
 
-    projects: t.List[Path]
-    """The list of projects in the workspace."""
+    workspace: "WorkspaceMetadata"
+    """The workspace configuration."""
+    package: "PackageMetadata"
+    """The package configuration."""
+
+
+class PackageMetadata(t.TypedDict, total=False):
     module: str
     """The module name of the project, otherwise inferred from the project name."""
     about: Path
     """Python file to read dynamic info from, otherwise inferred from module."""
+
+
+class WorkspaceMetadata(t.TypedDict, total=False):
+    """The workspace configuration."""
+
+    packages: t.List[Path]
+    """The list of packages in the workspace."""
 
 
 class ParseToolResult(t.NamedTuple):
@@ -81,21 +93,105 @@ def parse_tool(metadata: t.Dict[str, t.Any], root: Path) -> ParseToolResult:
         result.errors.append(VError(f"tool.{TOOL_SECTION}", "type", "must be a table"))
         return result
 
+    if "workspace" in config and "package" in config:
+        result.errors.append(
+            VError(
+                f"tool.{TOOL_SECTION}",
+                "key",
+                "cannot contain both 'workspace' and 'package'",
+            )
+        )
+
+    if "workspace" in config:
+        if not isinstance(config["workspace"], dict):
+            result.errors.append(
+                VError(f"tool.{TOOL_SECTION}.workspace", "type", "must be a table")
+            )
+        else:
+            wresult = parse_workspace(config["workspace"], root)
+            result.data["workspace"] = wresult[0]
+            result.errors.extend(wresult[1])
+
+    if "package" in config:
+        if not isinstance(config["package"], dict):
+            result.errors.append(
+                VError(f"tool.{TOOL_SECTION}.package", "type", "must be a table")
+            )
+        else:
+            presult = parse_package(config["package"], root)
+            result.data["package"] = presult[0]
+            result.errors.extend(presult[1])
+
+    return result
+
+
+def parse_workspace(
+    config: t.Dict[str, t.Any], root: Path
+) -> t.Tuple[WorkspaceMetadata, t.List[VError]]:
+    """Parse the package configuration."""
+    result: WorkspaceMetadata = {}
+    errors: t.List[VError] = []
+
+    if not isinstance(config.get("packages", []), list):
+        errors.append(VError(f"tool.{TOOL_SECTION}.packages", "type", "must be a list"))
+    elif config.get("packages"):
+        result["packages"] = []
+        for idx, project in enumerate(config.get("packages", [])):
+            if not isinstance(project, str):
+                errors.append(
+                    VError(
+                        f"tool.{TOOL_SECTION}.packages.{idx}",
+                        "type",
+                        "must be a string",
+                    )
+                )
+                continue
+            if Path(project).is_absolute():
+                errors.append(
+                    VError(
+                        f"tool.{TOOL_SECTION}.packages.{idx}",
+                        "value",
+                        "must be a relative path",
+                    )
+                )
+                continue
+            packages = [p for p in root.glob(project) if p.is_dir()]
+            if not packages:
+                errors.append(
+                    VError(
+                        f"tool.{TOOL_SECTION}.packages.{idx}",
+                        "value",
+                        "no matching directories found",
+                    )
+                )
+                continue
+            result["packages"].extend(packages)
+
+    return result, errors
+
+
+def parse_package(
+    config: t.Dict[str, t.Any], root: Path
+) -> t.Tuple[PackageMetadata, t.List[VError]]:
+    """Parse the package configuration."""
+    result: PackageMetadata = {}
+    errors: t.List[VError] = []
+
     if "module" in config:
         if not isinstance(config["module"], str):
-            result.errors.append(
+            errors.append(
                 VError(f"tool.{TOOL_SECTION}.module", "type", "must be a string")
             )
         else:
-            result.data["module"] = config["module"]
+            result["module"] = config["module"]
 
     if "about" in config:
         if not isinstance(config["about"], str):
-            result.errors.append(
+            errors.append(
                 VError(f"tool.{TOOL_SECTION}.about", "type", "must be a string")
             )
         elif Path(config["about"]).is_absolute():
-            result.errors.append(
+            errors.append(
                 VError(
                     f"tool.{TOOL_SECTION}.about",
                     "value",
@@ -103,43 +199,6 @@ def parse_tool(metadata: t.Dict[str, t.Any], root: Path) -> ParseToolResult:
                 )
             )
         else:
-            result.data["about"] = root / Path(config["about"])
+            result["about"] = root / Path(config["about"])
 
-    if not isinstance(config.get("projects", []), list):
-        result.errors.append(
-            VError(f"tool.{TOOL_SECTION}.projects", "type", "must be a list")
-        )
-    elif config.get("projects"):
-        result.data["projects"] = []
-        for idx, project in enumerate(config.get("projects", [])):
-            if not isinstance(project, str):
-                result.errors.append(
-                    VError(
-                        f"tool.{TOOL_SECTION}.projects.{idx}",
-                        "type",
-                        "must be a string",
-                    )
-                )
-                continue
-            if Path(project).is_absolute():
-                result.errors.append(
-                    VError(
-                        f"tool.{TOOL_SECTION}.projects.{idx}",
-                        "value",
-                        "must be a relative path",
-                    )
-                )
-                continue
-            projects = [p for p in root.glob(project) if p.is_dir()]
-            if not projects:
-                result.errors.append(
-                    VError(
-                        f"tool.{TOOL_SECTION}.projects.{idx}",
-                        "value",
-                        "no matching directories found",
-                    )
-                )
-                continue
-            result.data["projects"].extend(projects)
-
-    return result
+    return result, errors
