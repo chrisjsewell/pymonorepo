@@ -42,8 +42,10 @@ def parse_pyproject_toml(root: Path) -> PyMetadata:
     errors = project_result.errors + tool_result.errors
     if errors:
         raise RuntimeError(
-            "Error(s) parsing pyproject.toml:\n%s"
-            % "\n".join(f"[{e.key}]:{e.etype}: {e.msg}" for e in errors)
+            "Error(s) parsing {0}:\n{1}".format(
+                pyproject_file,
+                "\n".join(f"- [{e.key}]:{e.etype}: {e.msg}" for e in errors),
+            )
         )
 
     return {"project": project_result.data, "tool": tool_result.data}

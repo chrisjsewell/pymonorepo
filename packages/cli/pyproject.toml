@@ -1,0 +1,22 @@
+[build-system]
+requires = ["packaging>=22", "tomli", "editables"]
+build-backend = "pymonorepo.backend"
+backend-path = ["../build/src"]
+
+[project]
+name = "pymonorepo-cli"
+dynamic = [
+    "version",
+    "description",
+]
+authors = [{name = "Chris Sewell", email = "chrisj_sewell@hotmail.com"}]
+readme = "README.md"
+license = {file = "LICENSE"}
+classifiers = [
+    "License :: OSI Approved :: MIT License"
+]
+dependencies = []
+requires-python = ">=3.7"
+
+[project.scripts]
+pmr = "pymonorepo_cli:main"

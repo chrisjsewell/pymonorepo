@@ -27,9 +27,9 @@ _ALLOWED_FIELDS = {
     "keywords",
     "classifiers",
     "urls",
+    "entry-points",
     "scripts",
     "gui-scripts",
-    "entry-points",
     "dependencies",
     "optional-dependencies",
     "dynamic",
@@ -64,6 +64,13 @@ class Author(t.TypedDict, total=False):
     email: str
 
 
+class License(t.TypedDict, total=False):
+    """An author or maintainer."""
+
+    text: str
+    path: Path
+
+
 class ProjectData(t.TypedDict, total=False):
     """The validated PEP 621 project metadata from the pyproject.toml file."""
 
@@ -74,8 +81,7 @@ class ProjectData(t.TypedDict, total=False):
     readme_text: str
     readme_content_type: str
     readme_path: Path
-    license_text: str
-    license_path: Path
+    licenses: t.List[License]
     keywords: t.List[str]
     classifiers: t.List[str]
     urls: t.Dict[str, str]
@@ -204,15 +210,14 @@ def parse(data: t.Dict[str, t.Any], root: Path) -> ParseResult:
             if "file" in license:
                 result = _read_rel_path(license["file"], root, errors)
                 if result is not None:
-                    output["license_text"] = result.text
-                    output["license_path"] = result.path
+                    output["licenses"] = [{"text": result.text, "path": result.path}]
             elif "text" in license:
                 if not isinstance(license["text"], str):
                     errors.append(
                         VError("project.license.text", "type", "must be a string")
                     )
                 else:
-                    output["license_text"] = license["text"]
+                    output["licenses"] = [{"text": license["text"]}]
             else:
                 errors.append(
                     VError("project.license", "key", "missing 'file' or 'text'")

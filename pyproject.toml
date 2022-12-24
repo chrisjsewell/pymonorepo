@@ -1,29 +1,30 @@
 [build-system]
 requires = ["packaging>=22", "tomli", "editables"]
 build-backend = "pymonorepo.backend"
-backend-path = ["src"]
+backend-path = ["packages/builder/src"]
+
+[tool.monorepo.workspace]
+packages = ["packages/*"]
 
 [project]
-name = "pymonorepo"
-dynamic = ["version", "description"]
-authors = [{name = "Chris Sewell", email = "chrisj_sewell@hotmail.com"}]
+name = "pymonorepo-meta"
+version = "0.0.1"
+description = "A monorepo tool for Python"
 readme = "README.md"
 license = {file = "LICENSE"}
-classifiers = ["License :: OSI Approved :: MIT License"]
-dependencies = ["packaging>=22", "tomli", "editables"]
-requires-python = ">=3.7"
+classifiers = [
+    "License :: OSI Approved :: MIT License"
+]
+dynamic = [
+    "requires-python",
+    "dependencies",
+    "entry-points",
+    "scripts",
+    "gui-scripts",
+]
 
 [project.urls]
 Home = "https://github.com/chrisjsewell/pymonorepo"
-
-[project.scripts]
-pymonorepo = "pymonorepo:main"
-
-# [tool.monorepo.package]
-# module = "pymonorepo"
-# about = "src/pymonorepo/__about__.py"
-# [tool.monorepo.workspace]
-# packages = ["packages/*"]
 
 [tool.ruff]
 line-length = 100
