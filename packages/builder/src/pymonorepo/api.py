@@ -6,7 +6,7 @@ from pathlib import Path, PurePosixPath
 
 from packaging.requirements import Requirement
 
-from .pep621 import Author, License, ProjectData
+from .pep621 import Author, License, ProjectData, ValidPath
 from .pyproject import PyMetadata, parse_pyproject_toml
 from .wheel import WheelWriter, write_wheel
 
@@ -60,7 +60,12 @@ def analyse_workspace(
             if "path" in license:
                 license_path = pkg_path / license["path"]
                 licenses.append(
-                    {"path": PurePosixPath(license_path.relative_to(root).as_posix())}
+                    {
+                        "path": t.cast(
+                            ValidPath,
+                            PurePosixPath(license_path.relative_to(root).as_posix()),
+                        )
+                    }
                 )
             elif "text" in license:
                 licenses.append({"text": license["text"]})

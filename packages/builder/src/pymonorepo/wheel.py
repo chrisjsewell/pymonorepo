@@ -56,7 +56,7 @@ def write_wheel(
     # write the dist_info (note this is recommended to be last in the file)
     wheel_metadata = whl.get_metadata(f"{__name__} {__version__}")
     whl.write_text((whl.dist_info, "WHEEL"), wheel_metadata)
-    metadata_text = create_metadata(project_data)
+    metadata_text = create_metadata(project_data, root)
     whl.write_text((whl.dist_info, "METADATA"), metadata_text)
     entrypoint_text = create_entrypoints(project_data)
     if entrypoint_text:

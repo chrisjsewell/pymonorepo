@@ -1,11 +1,12 @@
 """Create the content for the `METADATA` (wheel) of `PKG_INFO` (sdist) file."""
 import typing as t
 from email.headerregistry import Address
+from pathlib import Path
 
 from .pep621 import Author, ProjectData
 
 
-def create_metadata(project: ProjectData) -> str:
+def create_metadata(project: ProjectData, root: Path) -> str:
     """Create the content for the `METADATA` (wheel) of `PKG_INFO` (sdist) file.
 
     :project: The project data.
@@ -38,10 +39,14 @@ def create_metadata(project: ProjectData) -> str:
         metadata_text += f"Provides-Extra: {extra}\n"
         for req in reqs:
             metadata_text += f"Requires-Dist: {req} ; extra == '{extra}'\n"
-    if "readme_content_type" in project:
-        metadata_text += f"Description-Content-Type: {project['readme_content_type']}\n"
-    if "readme_text" in project:
-        metadata_text += f"\n{project['readme_text']}\n"
+    readme = project.get("readme", {})
+    if "content_type" in readme:
+        metadata_text += f"Description-Content-Type: {readme['content_type']}\n"
+    if "text" in readme:
+        metadata_text += f"\n{readme['text']}\n"
+    elif "path" in readme:
+        text = (root / readme["path"]).read_text("utf-8")
+        metadata_text += f"\n{text}\n"
 
     metadata_text += "\n"
 

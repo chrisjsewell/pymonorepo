@@ -56,6 +56,12 @@ DYNAMIC_KEY_TYPE = t.Literal[
     "optional-dependencies",
 ]
 
+ValidPath = t.NewType("ValidPath", PurePosixPath)
+"""A path relative to the project root, delimited by '/',
+which does not contain '..',
+and points to an existing file with utf8 encoding.
+"""
+
 
 class Author(t.TypedDict, total=False):
     """An author or maintainer."""
@@ -68,8 +74,15 @@ class License(t.TypedDict, total=False):
     """An author or maintainer."""
 
     text: str
-    path: PurePosixPath
-    """The path to the license file, relative to the project root."""
+    path: ValidPath
+
+
+class Readme(t.TypedDict, total=False):
+    """The project's readme."""
+
+    content_type: str
+    path: ValidPath
+    text: str
 
 
 class ProjectData(t.TypedDict, total=False):
@@ -79,9 +92,7 @@ class ProjectData(t.TypedDict, total=False):
     dynamic: t.List[DYNAMIC_KEY_TYPE]
     version: Version
     description: str
-    readme_text: str
-    readme_content_type: str
-    readme_path: Path
+    readme: Readme
     licenses: t.List[License]
     keywords: t.List[str]
     classifiers: t.List[str]
@@ -209,13 +220,11 @@ def parse(data: t.Dict[str, t.Any], root: Path) -> ParseResult:
                     )
                 )
             if "file" in license:
-                error = _validate_license_path(
-                    license["file"], "project.license.file", root
+                valid_path = _validate_file_path(
+                    license["file"], "project.license.file", root, errors
                 )
-                if error is None:
-                    output["licenses"] = [{"path": PurePosixPath(license["file"])}]
-                else:
-                    errors.append(error)
+                if valid_path is not None:
+                    output["licenses"] = [{"path": valid_path}]
             elif "text" in license:
                 if not isinstance(license["text"], str):
                     errors.append(
@@ -471,25 +480,25 @@ def _parse_readme(
         return
 
     if isinstance(readme, str):
-        result = _read_rel_path(readme, root, errors)
-        if result is not None:
-            output["readme_text"] = result.text
-            content_type = _guess_readme_mimetype(result.path)
+        valid_path = _validate_file_path(readme, "project.readme", root, errors)
+        if valid_path is not None:
+            content_type = _guess_readme_mimetype(valid_path)
+            output["readme"] = {"path": valid_path}
             if content_type is not None:
-                output["readme_content_type"] = content_type
-            output["readme_path"] = result.path
+                output["readme"]["content_type"] = content_type
         return
 
     for key in set(readme.keys()) - {"text", "file", "content-type"}:
         errors.append(VError(f"project.readme.{key}", "key", "unknown"))
 
+    content_type = None
     if "content-type" in readme:
         if not isinstance(readme["content-type"], str):
             errors.append(
                 VError("project.readme.content-type", "type", "must be a string")
             )
         else:
-            output["readme_content_type"] = readme["content-type"]
+            content_type = readme["content-type"]
     else:
         errors.append(VError("project.readme.content-type", "key", "missing"))
 
@@ -506,17 +515,22 @@ def _parse_readme(
         if not isinstance(readme["text"], str):
             errors.append(VError("project.readme.text", "type", "must be a string"))
         else:
-            output["readme_text"] = readme["text"]
+            output["readme"] = {"text": readme["text"]}
+            if content_type is not None:
+                output["readme"]["content_type"] = content_type
         return
 
     if "file" in readme:
         if not isinstance(readme["file"], str):
             errors.append(VError("project.readme.file", "type", "must be a string"))
         else:
-            result = _read_rel_path(readme["file"], root, errors)
-            if result is not None:
-                output["readme_text"] = result.text
-                output["readme_path"] = result.path
+            valid_path = _validate_file_path(
+                readme["file"], "project.readme.file", root, errors
+            )
+            if valid_path is not None:
+                output["readme"] = {"path": valid_path}
+                if content_type is not None:
+                    output["readme"]["content_type"] = content_type
         return
 
     errors.append(
@@ -524,56 +538,39 @@ def _parse_readme(
     )
 
 
-class FileContent(t.NamedTuple):
-    """The content of a file."""
+def _validate_file_path(
+    value: str, key: str, root: Path, errors: t.List[VError]
+) -> t.Optional[ValidPath]:
+    """Validate a relative file path from the project root.
 
-    path: Path
-    text: str
-
-
-def _validate_license_path(value: str, key: str, root: Path) -> t.Optional[VError]:
-    """Validate the license file path.
-
-    :param value: The license file path.
-    :param root: The path to the pyproject.toml file.
+    :param value: A relative path.
+    :param key: The key of the path in the project table.
+    :param root: The path to the project root.
+    :param errors: The list of validation errors. to append to.
     """
     try:
         rel_path = PurePosixPath(value)
     except Exception as exc:
-        return VError(key, "value", f"invalid path: {exc}")
+        errors.append(VError(key, "value", f"invalid path: {exc}"))
+        return None
     if rel_path.is_absolute():
-        return VError(key, "value", "path must be relative")
+        errors.append(VError(key, "value", "path must be relative"))
+        return None
     if ".." in rel_path.parts:
-        return VError(key, "value", "path must not contain '..'")
-    path = root / rel_path
-    if not path.is_file():
-        return VError(key, "value", f"file not found: {path}")
+        errors.append(VError(key, "value", "path must not contain '..'"))
+        return None
+    full_path = root / rel_path
+    if not full_path.is_file():
+        errors.append(VError(key, "value", f"file not found: {full_path}"))
+        return None
     try:
-        path.read_text("utf-8")
+        full_path.read_text("utf-8")
     except Exception as exc:
-        return VError(key, "value", f"file not readable: {exc}")
-    return None
+        errors.append(VError(key, "value", f"file not readable: {exc}"))
+    return t.cast(ValidPath, rel_path)
 
 
-def _read_rel_path(
-    rel: str, root: Path, errors: t.List[VError]
-) -> t.Optional[FileContent]:
-    if Path(rel).is_absolute():
-        errors.append(VError("project.readme", "value", "path must be relative"))
-        return None
-    path = root / rel
-    if not path.is_file():
-        errors.append(VError("project.readme", "value", f"file not found: {path}"))
-        return None
-    try:
-        text = path.read_text("utf-8")
-    except OSError as exc:
-        errors.append(VError("project.readme", "value", str(exc)))
-        return None
-    return FileContent(path, text)
-
-
-def _guess_readme_mimetype(path: Path) -> t.Optional[str]:
+def _guess_readme_mimetype(path: ValidPath) -> t.Optional[str]:
     """Guess the mimetype of the readme.
 
     :param path: The path to the file.
