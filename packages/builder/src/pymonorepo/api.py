@@ -158,17 +158,16 @@ def analyse_project(
 def build_wheel(
     root: Path,
     wheel_directory: Path,
-    config_settings: t.Optional[t.Dict[str, t.Any]] = None,
-    metadata_directory: t.Optional[str] = None,
+    *,
     editable: bool = False,
-) -> str:
+    meta_only: bool = False,
+) -> WheelWriter:
     """Build a .whl file, and place it in the specified wheel_directory.
 
     :param root: The root of the project.
     :param wheel_directory: The directory in which to place the .whl file.
-    :param config_settings: A dictionary of configuration settings.
-    :param metadata_directory: The directory containing the .dist-info directory.
     :param editable: Whether to build an editable wheel.
+    :param meta_only: Whether to build a metadata-only wheel.
 
     :returns: The basename (not the full path) of the .whl file it creates, as a unicode string.
     """
@@ -182,8 +181,10 @@ def build_wheel(
         "none",
         "any",
     ) as wheel:
-        write_wheel(wheel, root, proj_config, modules, editable=editable)
-        return wheel.name
+        write_wheel(
+            wheel, root, proj_config, modules, editable=editable, meta_only=meta_only
+        )
+    return wheel
 
 
 def build_sdist(

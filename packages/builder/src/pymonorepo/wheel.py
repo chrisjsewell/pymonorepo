@@ -27,31 +27,44 @@ def write_wheel(
     root: Path,
     project_data: ProjectData,
     modules: t.Mapping[str, Path],
+    *,
     editable: bool = False,
+    meta_only: bool = False,
 ) -> None:
     """Write a wheel."""
-    # write the python modules
-    if not editable:
-        for _, module in modules.items():
-            if module.is_dir():
-                copy_module_folder(whl, module)
-            elif module.is_file():
-                whl.write_path([module.name], module)
-            else:
-                raise FileNotFoundError(module)
-    else:
-        eproject = editables.EditableProject(project_data["name"], ".")
-        for module_name, module in modules.items():
-            if module.is_dir() or module.is_file():
-                eproject.map(module_name, module.absolute())
-            else:
-                raise FileNotFoundError(module)
-        for name, content in eproject.files():
-            whl.write_text([name], content)
-        for dep in eproject.dependencies():
-            req = Requirement(dep)
-            if req not in project_data["dependencies"]:
-                project_data["dependencies"].append(req)
+    if not meta_only:
+
+        # write the python modules
+        if not editable:
+            for _, module in modules.items():
+                if module.is_dir():
+                    copy_module_folder(whl, module)
+                elif module.is_file():
+                    whl.write_path([module.name], module)
+                else:
+                    raise FileNotFoundError(module)
+        else:
+            eproject = editables.EditableProject(project_data["name"], ".")
+            for module_name, module in modules.items():
+                if module.is_dir() or module.is_file():
+                    eproject.map(module_name, module.absolute())
+                else:
+                    raise FileNotFoundError(module)
+            for name, content in eproject.files():
+                whl.write_text([name], content)
+            for dep in eproject.dependencies():
+                req = Requirement(dep)
+                if req not in project_data["dependencies"]:
+                    project_data["dependencies"].append(req)
+
+        # write license files to dist_info
+        # note, there is currently no standard for this, but it will likely be added in:
+        # https://peps.python.org/pep-0639
+        for license_file in project_data["licenses"]:
+            if "path" in license_file:
+                license_text = root.joinpath(license_file["path"]).read_text("utf-8")
+                license_path = (whl.dist_info, "licenses") + license_file["path"].parts
+                whl.write_text(license_path, license_text)
 
     # write the dist_info (note this is recommended to be last in the file)
     wheel_metadata = whl.get_metadata(f"{__name__} {__version__}")
@@ -61,14 +74,6 @@ def write_wheel(
     entrypoint_text = create_entrypoints(project_data)
     if entrypoint_text:
         whl.write_text((whl.dist_info, "entry_points.txt"), entrypoint_text)
-    # write license files to dist_info
-    # note, there is currently no standard for this, but it will likely be added in:
-    # https://peps.python.org/pep-0639
-    for license_file in project_data["licenses"]:
-        if "path" in license_file:
-            license_text = root.joinpath(license_file["path"]).read_text("utf-8")
-            license_path = (whl.dist_info, "licenses") + license_file["path"].parts
-            whl.write_text(license_path, license_text)
 
 
 @dataclass
@@ -179,8 +184,13 @@ class WheelWriter:
         self._zip = None
 
     @property
+    def path(self) -> Path:
+        """Return the path to the wheel."""
+        return self._path
+
+    @property
     def name(self) -> str:
-        """Return the basename."""
+        """Return the basename of the wheel."""
         return self._path.name
 
     @property

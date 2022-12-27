@@ -10,17 +10,19 @@ Mandatory hooks:
 Optional hooks:
 
 - build_editable
+- prepare_metadata_for_build_wheel
+- prepare_metadata_for_build_editable
 """
+import shutil
 import typing as t
+import zipfile
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from . import api
 
 CWD = Path.cwd()
 """This module should always be called with the CWD set to the root of the project."""
-
-
-# TODO add prepare_metadata_for_build_wheel / prepare_metadata_for_build_editable
 
 
 def build_wheel(
@@ -36,9 +38,7 @@ def build_wheel(
 
     :returns: The basename (not the full path) of the .whl file it creates, as a unicode string.
     """
-    return api.build_wheel(
-        CWD, Path(wheel_directory), config_settings, metadata_directory
-    )
+    return api.build_wheel(CWD, Path(wheel_directory)).name
 
 
 def build_sdist(
@@ -69,6 +69,26 @@ def build_editable(
     :returns: The basename (not the full path) of the .whl file it creates.
         The filename for the “editable” wheel needs to be PEP 427 compliant too.
     """
-    return api.build_wheel(
-        CWD, Path(wheel_directory), config_settings, metadata_directory, editable=True
-    )
+    return api.build_wheel(CWD, Path(wheel_directory), editable=True).name
+
+
+def prepare_metadata_for_build_wheel(
+    metadata_directory: str, config_settings: t.Optional[t.Dict[str, t.Any]] = None
+) -> str:
+    """Prepare the metadata for a wheel build.
+
+    :param metadata_directory: The directory in which to place the metadata.
+    :param config_settings: A dictionary of configuration settings.
+    """
+    with TemporaryDirectory() as path_str:
+        path = Path(path_str)
+        wheel = api.build_wheel(CWD, path, meta_only=True)
+        # unpack the wheel to temporary directory
+        with zipfile.ZipFile(wheel.path, mode="r") as zip_file:
+            zip_file.extractall(path)
+        # move the dist-info directory to the metadata directory
+        shutil.move(str(path / wheel.dist_info), metadata_directory)
+    return wheel.dist_info
+
+
+prepare_metadata_for_build_editable = prepare_metadata_for_build_wheel
