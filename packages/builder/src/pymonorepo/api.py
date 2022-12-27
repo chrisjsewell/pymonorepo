@@ -8,7 +8,7 @@ from packaging.requirements import Requirement
 
 from .pep621 import Author, ProjectData
 from .pyproject import PyMetadata, parse_pyproject_toml
-from .wheel import WheelZip, write_wheel
+from .wheel import WheelWriter, write_wheel
 
 
 def analyse_workspace(
@@ -62,7 +62,6 @@ def analyse_workspace(
             modules[module_name] = module_path
 
     if dependencies:
-        # TODO reduce dependencies
         proj_config["dependencies"] = reduce_dependencies(dependencies)
     if requires_python:
         proj_config["requires_python"] = reduce(lambda a, b: a & b, requires_python)
@@ -129,7 +128,7 @@ def analyse_project(
             mod_info = read_ast_info(module_path)
         missing = set(proj_config["dynamic"]) - set(mod_info)  # type: ignore
         if missing:
-            raise RuntimeError(f"Dynamic keys {missing} not found: {root}")
+            raise KeyError(f"Dynamic keys {missing} not found: {root}")
         for dynamic_key, dynamic_value in mod_info.items():
             if dynamic_key in proj_config["dynamic"]:
                 proj_config[dynamic_key] = dynamic_value  # type: ignore
@@ -156,13 +155,16 @@ def build_wheel(
     """
     proj_config, modules = analyse_project(root)
 
-    wheel_path = wheel_directory.joinpath(
-        f"{proj_config['name']}-{proj_config['version']}-py3-none-any.whl"
-    )
-    with WheelZip(wheel_path) as wheel:
+    with WheelWriter(
+        wheel_directory,
+        proj_config["name"],
+        str(proj_config["version"]),
+        "py3",
+        "none",
+        "any",
+    ) as wheel:
         write_wheel(wheel, proj_config, modules, editable=editable)
-
-    return wheel_path.name
+        return wheel.name
 
 
 def build_sdist(

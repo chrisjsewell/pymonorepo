@@ -67,3 +67,21 @@ def _pep621_people(
     if emails:
         res[group_name + "-email"] = ", ".join(emails)
     return res
+
+
+def create_entrypoints(project: ProjectData) -> str:
+    """Create the `entry_points.txt` file content.
+
+    :project: The project data.
+    """
+    if project.get("entry_points"):
+        entrypoint_text = ""
+        for group_name in sorted(project["entry_points"]):
+            entrypoint_text += f"[{group_name}]\n"
+            group = project["entry_points"][group_name]
+            for name in sorted(group):
+                val = group[name]
+                entrypoint_text += f"{name}={val}\n"
+            entrypoint_text += "\n"
+        return entrypoint_text
+    return ""

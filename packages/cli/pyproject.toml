@@ -15,8 +15,10 @@ license = {file = "LICENSE"}
 classifiers = [
     "License :: OSI Approved :: MIT License"
 ]
-dependencies = []
+dependencies = [
+    "click",
+]
 requires-python = ">=3.7"
 
 [project.scripts]
-pmr = "pymonorepo_cli:main"
+pmr = "pymonorepo_cli:__main__"

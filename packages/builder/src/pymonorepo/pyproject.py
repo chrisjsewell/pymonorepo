@@ -5,7 +5,7 @@ from pathlib import Path
 try:
     import tomllib
 except ImportError:
-    import tomli as tomllib
+    import tomli as tomllib  # type: ignore[no-redef]
 
 from .pep621 import ProjectData, VError
 from .pep621 import parse as parse_project

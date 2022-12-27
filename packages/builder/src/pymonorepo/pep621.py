@@ -115,7 +115,7 @@ def parse(data: t.Dict[str, t.Any], root: Path) -> ParseResult:
     :param data: The data from the pyproject.toml file.
     :param root: The folder containing the pyproject.toml file.
     """
-    output: ProjectData = {"name": ""}
+    output: ProjectData = {"name": canonicalize_name("")}
     errors: t.List[VError] = []
 
     if "project" not in data:
