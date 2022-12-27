@@ -2,11 +2,11 @@
 import ast
 import typing as t
 from functools import reduce
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from packaging.requirements import Requirement
 
-from .pep621 import Author, ProjectData
+from .pep621 import Author, License, ProjectData
 from .pyproject import PyMetadata, parse_pyproject_toml
 from .wheel import WheelWriter, write_wheel
 
@@ -19,24 +19,28 @@ def analyse_workspace(
     tool_config = metadata["tool"]
     wspace_config = tool_config["workspace"]
 
-    required_dynamic = [
+    required_dynamic = {
+        "license",
         "requires-python",
         "dependencies",
         "entry-points",
         "scripts",
         "gui-scripts",
-    ]
-    # TODO collate licenses?
-    if proj_config.get("dynamic", []) != required_dynamic:
-        raise RuntimeError(f"Workspace must have dynamic keys: {required_dynamic}")
+    }
+    proj_dynamic = set(proj_config.get("dynamic", []))
+    if proj_dynamic != required_dynamic:
+        raise RuntimeError(
+            f"Workspace must have dynamic keys: {required_dynamic}, got {proj_dynamic}"
+        )
 
     # gather all package metadata
     modules = {}
     dependencies = []
     requires_python = []
     entry_points = {}
-    for package in wspace_config.get("packages", []):
-        pkg_data, pkg_modules = analyse_project(package, in_workspace=True)
+    licenses: t.List[License] = []
+    for pkg_path in wspace_config.get("packages", []):
+        pkg_data, pkg_modules = analyse_project(pkg_path, in_workspace=True)
 
         dependencies.extend(pkg_data.get("dependencies", []))
         if "requires_python" in pkg_data:
@@ -52,6 +56,14 @@ def analyse_workspace(
                                 f"Entry point {name} already defined: {point}"
                             )
                         entry_points[group][name] = point
+        for license in pkg_data.get("licenses", []):
+            if "path" in license:
+                license_path = pkg_path / license["path"]
+                licenses.append(
+                    {"path": PurePosixPath(license_path.relative_to(root).as_posix())}
+                )
+            elif "text" in license:
+                licenses.append({"text": license["text"]})
 
         # merge modules and check for conflicts
         for module_name, module_path in pkg_modules.items():
@@ -67,6 +79,8 @@ def analyse_workspace(
         proj_config["requires_python"] = reduce(lambda a, b: a & b, requires_python)
     if entry_points:
         proj_config["entry_points"] = entry_points
+    if licenses:
+        proj_config["licenses"] = licenses
 
     return proj_config, modules
 
@@ -163,7 +177,7 @@ def build_wheel(
         "none",
         "any",
     ) as wheel:
-        write_wheel(wheel, proj_config, modules, editable=editable)
+        write_wheel(wheel, root, proj_config, modules, editable=editable)
         return wheel.name
 
 

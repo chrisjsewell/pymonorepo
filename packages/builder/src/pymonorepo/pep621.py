@@ -4,7 +4,7 @@ See https://www.python.org/dev/peps/pep-0621/, and
 https://packaging.python.org/en/latest/specifications/declaring-project-metadata
 """
 import typing as t
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
@@ -68,7 +68,8 @@ class License(t.TypedDict, total=False):
     """An author or maintainer."""
 
     text: str
-    path: Path
+    path: PurePosixPath
+    """The path to the license file, relative to the project root."""
 
 
 class ProjectData(t.TypedDict, total=False):
@@ -208,9 +209,13 @@ def parse(data: t.Dict[str, t.Any], root: Path) -> ParseResult:
                     )
                 )
             if "file" in license:
-                result = _read_rel_path(license["file"], root, errors)
-                if result is not None:
-                    output["licenses"] = [{"text": result.text, "path": result.path}]
+                error = _validate_license_path(
+                    license["file"], "project.license.file", root
+                )
+                if error is None:
+                    output["licenses"] = [{"path": PurePosixPath(license["file"])}]
+                else:
+                    errors.append(error)
             elif "text" in license:
                 if not isinstance(license["text"], str):
                     errors.append(
@@ -524,6 +529,30 @@ class FileContent(t.NamedTuple):
 
     path: Path
     text: str
+
+
+def _validate_license_path(value: str, key: str, root: Path) -> t.Optional[VError]:
+    """Validate the license file path.
+
+    :param value: The license file path.
+    :param root: The path to the pyproject.toml file.
+    """
+    try:
+        rel_path = PurePosixPath(value)
+    except Exception as exc:
+        return VError(key, "value", f"invalid path: {exc}")
+    if rel_path.is_absolute():
+        return VError(key, "value", "path must be relative")
+    if ".." in rel_path.parts:
+        return VError(key, "value", "path must not contain '..'")
+    path = root / rel_path
+    if not path.is_file():
+        return VError(key, "value", f"file not found: {path}")
+    try:
+        path.read_text("utf-8")
+    except Exception as exc:
+        return VError(key, "value", f"file not readable: {exc}")
+    return None
 
 
 def _read_rel_path(

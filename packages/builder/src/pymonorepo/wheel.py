@@ -24,6 +24,7 @@ from .pep621 import ProjectData
 
 def write_wheel(
     whl: "WheelWriter",
+    root: Path,
     project_data: ProjectData,
     modules: t.Mapping[str, Path],
     editable: bool = False,
@@ -60,7 +61,14 @@ def write_wheel(
     entrypoint_text = create_entrypoints(project_data)
     if entrypoint_text:
         whl.write_text((whl.dist_info, "entry_points.txt"), entrypoint_text)
-    # TODO write license file(s) to dist_info
+    # write license files to dist_info
+    # note, there is currently no standard for this, but it will likely be added in:
+    # https://peps.python.org/pep-0639
+    for license_file in project_data["licenses"]:
+        if "path" in license_file:
+            license_text = root.joinpath(license_file["path"]).read_text("utf-8")
+            license_path = (whl.dist_info, "licenses") + license_file["path"].parts
+            whl.write_text(license_path, license_text)
 
 
 @dataclass
