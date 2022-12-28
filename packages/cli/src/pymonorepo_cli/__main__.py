@@ -3,6 +3,7 @@ import json
 import typing as t
 from pathlib import Path
 
+import build.__main__ as build_cli
 import click
 import yaml
 
@@ -40,5 +41,53 @@ def analyse(path: str) -> None:
     )
     click.echo(yaml.dump(cleaned, indent=2, sort_keys=False))
 
+
+@main.command("build")
+@click.argument(
+    "srcdir", default=".", type=click.Path(exists=True, file_okay=False, dir_okay=True)
+)
+@click.option(
+    "-o",
+    "--outdir",
+    default=None,
+    type=click.Path(file_okay=False, dir_okay=True),
+    help="output directory (defaults to {srcdir}/dist)",
+)
+@click.option(
+    "-s",
+    "--sdist",
+    is_flag=True,
+    default=False,
+    help="build a source distribution only",
+)
+@click.option(
+    "-w", "--wheel", is_flag=True, default=False, help="build a wheel distribution only"
+)
+@click.option(
+    "--isolation/--no-isolation",
+    default=True,
+    help="isolate the build in a virtual environment",
+)
+def _build(
+    srcdir: str, outdir: t.Optional[str], wheel: bool, sdist: bool, isolation: bool
+) -> None:
+    """Build a project"""
+    srcpath = Path(srcdir)
+    if outdir is None:
+        outpath = srcpath / "dist"
+    else:
+        outpath = Path(outdir)
+    if wheel or sdist:
+        distributions = []
+        if wheel:
+            distributions.append("wheel")
+        if sdist:
+            distributions.append("sdist")
+    else:
+        distributions = ["wheel", "sdist"]
+    build_cli.build_package(srcpath, outpath, distributions, isolation=isolation)
+
+
+# TODO: add commands; init, publish, etc.
 
 main()
