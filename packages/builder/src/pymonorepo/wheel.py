@@ -9,6 +9,7 @@ import typing as t
 import zipfile
 from base64 import urlsafe_b64encode
 from dataclasses import dataclass
+from datetime import datetime
 from fnmatch import fnmatch
 from pathlib import Path
 from textwrap import dedent
@@ -146,9 +147,7 @@ class WheelWriter:
         self._path = directory.joinpath(f"{name}.whl")
         self._zip: t.Optional[zipfile.ZipFile] = None
         self._records: t.List[Record] = []
-        # fixed timestamp for reproducible builds
-        # TODO get the timestamp from the SOURCE_DATE_EPOCH environment variable
-        self._time_stamp = (2016, 1, 1, 0, 0, 0)
+        self._fixed_time_stamp = zip_timestamp_from_env()
 
     @staticmethod
     def raise_not_open() -> t.NoReturn:
@@ -258,7 +257,8 @@ class WheelWriter:
             self.raise_not_open()
         content = text.encode(encoding)
         hashsum = hashlib.sha256(content)
-        zinfo = zipfile.ZipInfo("/".join(path), self._time_stamp)
+        time_stamp = self._fixed_time_stamp or (2016, 1, 1, 0, 0, 0)
+        zinfo = zipfile.ZipInfo("/".join(path), time_stamp)
         zinfo.external_attr = 0o644 << 16
         self._zip.writestr(zinfo, content, compress_type=zipfile.ZIP_DEFLATED)
         self._records.append(Record("/".join(path), encode_hash(hashsum), len(content)))
@@ -278,7 +278,13 @@ class WheelWriter:
         """
         if self._zip is None:
             self.raise_not_open()
-        zinfo = zipfile.ZipInfo("/".join(path), self._time_stamp)
+
+        rel_path = "/".join(path)
+        if self._fixed_time_stamp is None:
+            zinfo = zipfile.ZipInfo.from_file(source, rel_path)
+        else:
+            zinfo = zipfile.ZipInfo(rel_path, self._fixed_time_stamp)
+        zinfo.compress_type = zipfile.ZIP_DEFLATED
         # Normalize permission bits to either 755 (executable) or 644
         st_mode = source.stat().st_mode
         new_mode = normalize_file_permissions(st_mode)
@@ -312,6 +318,29 @@ def normalize_file_permissions(st_mode: int) -> int:
     if st_mode & 0o100:
         new_mode |= 0o111  # Executable: 644 -> 755
     return new_mode
+
+
+def zip_timestamp_from_env() -> t.Optional[t.Tuple[int, int, int, int, int, int]]:
+    """Prepare a timestamp from $SOURCE_DATE_EPOCH, if set.
+
+    This allows for a fixed timestamp rather than the current time, so
+    that building a wheel twice on the same computer can automatically
+    give you the exact same result.
+    """
+    try:
+        # If SOURCE_DATE_EPOCH is set (e.g. by Debian), it's used for
+        # timestamps inside the zip file.
+        d = datetime.utcfromtimestamp(int(os.environ["SOURCE_DATE_EPOCH"]))
+    except (KeyError, ValueError):
+        # Otherwise, we'll use the mtime of files, and generated files will
+        # default to 2016-1-1 00:00:00
+        return None
+
+    if d.year >= 1980:
+        # zipfile expects a 6-tuple, not a datetime object
+        return d.year, d.month, d.day, d.hour, d.minute, d.second
+    else:
+        return 1980, 1, 1, 0, 0, 0
 
 
 def encode_hash(hashsum: t.Any) -> str:
