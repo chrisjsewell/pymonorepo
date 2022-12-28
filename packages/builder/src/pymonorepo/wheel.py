@@ -15,9 +15,6 @@ from pathlib import Path
 from textwrap import dedent
 from types import TracebackType
 
-import editables
-from packaging.requirements import Requirement
-
 from . import __name__, __version__
 from .metadata import create_entrypoints, create_metadata
 from .pep621 import ProjectData
@@ -36,7 +33,14 @@ def write_wheel(
     if not meta_only:
 
         # write the python modules
-        if not editable:
+        if editable:
+            # Note, another way to do this is to use the editables hook,
+            # https://peps.python.org/pep-0660/#what-to-put-in-the-wheel
+            # although more precise, it is not supported in IDEs like VS Code.
+            pth_name = re.sub(r"[-_.]+", "_", project_data["name"]).lower() + ".pth"
+            paths = set(path.absolute().parent for path in modules.values())
+            whl.write_text([pth_name], "\n".join(str(path) for path in paths))
+        else:
             for _, module in modules.items():
                 if module.is_dir():
                     copy_module_folder(whl, module)
@@ -44,19 +48,6 @@ def write_wheel(
                     whl.write_path([module.name], module)
                 else:
                     raise FileNotFoundError(module)
-        else:
-            eproject = editables.EditableProject(project_data["name"], ".")
-            for module_name, module in modules.items():
-                if module.is_dir() or module.is_file():
-                    eproject.map(module_name, module.absolute())
-                else:
-                    raise FileNotFoundError(module)
-            for name, content in eproject.files():
-                whl.write_text([name], content)
-            for dep in eproject.dependencies():
-                req = Requirement(dep)
-                if req not in project_data["dependencies"]:
-                    project_data["dependencies"].append(req)
 
         # write license files to dist_info
         # note, there is currently no standard for this, but it will likely be added in:

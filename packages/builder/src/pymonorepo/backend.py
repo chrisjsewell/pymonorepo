@@ -19,7 +19,7 @@ import zipfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from . import api
+from . import build
 
 CWD = Path.cwd()
 """This module should always be called with the CWD set to the root of the project."""
@@ -38,7 +38,7 @@ def build_wheel(
 
     :returns: The basename (not the full path) of the .whl file it creates, as a unicode string.
     """
-    return api.build_wheel(CWD, Path(wheel_directory)).name
+    return build.build_wheel(CWD, Path(wheel_directory)).name
 
 
 def build_sdist(
@@ -52,7 +52,7 @@ def build_sdist(
 
     :returns: The basename (not the full path) of the .tar.gz file it creates, as a unicode string.
     """
-    return api.build_sdist(CWD, Path(sdist_directory), config_settings)
+    return build.build_sdist(CWD, Path(sdist_directory), config_settings)
 
 
 def build_editable(
@@ -69,7 +69,7 @@ def build_editable(
     :returns: The basename (not the full path) of the .whl file it creates.
         The filename for the “editable” wheel needs to be PEP 427 compliant too.
     """
-    return api.build_wheel(CWD, Path(wheel_directory), editable=True).name
+    return build.build_wheel(CWD, Path(wheel_directory), editable=True).name
 
 
 def prepare_metadata_for_build_wheel(
@@ -82,7 +82,7 @@ def prepare_metadata_for_build_wheel(
     """
     with TemporaryDirectory() as path_str:
         path = Path(path_str)
-        wheel = api.build_wheel(CWD, path, meta_only=True)
+        wheel = build.build_wheel(CWD, path, meta_only=True)
         # unpack the wheel to temporary directory
         with zipfile.ZipFile(wheel.path, mode="r") as zip_file:
             zip_file.extractall(path)

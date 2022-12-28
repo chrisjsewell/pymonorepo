@@ -31,5 +31,5 @@ repos:
   - id: mypy
     additional_dependencies:
     - click
-    - editables
     - packaging
+    - types-PyYAML

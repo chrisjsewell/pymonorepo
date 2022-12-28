@@ -1,5 +1,5 @@
 [build-system]
-requires = ["packaging>=22", "tomli", "editables"]
+requires = ["packaging>=22", "tomli"]
 build-backend = "pymonorepo.backend"
 backend-path = ["packages/builder/src"]
 
