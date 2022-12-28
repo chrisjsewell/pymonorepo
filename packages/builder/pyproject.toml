@@ -22,7 +22,5 @@ requires-python = ">=3.7"
 Home = "https://github.com/chrisjsewell/pymonorepo"
 
 [tool.monorepo.package]
-# TODO share urls, license, etc?
-# workspace = "../.."
-module = "pymonorepo"  # TODO modules, with rel paths?
+module = "pymonorepo"
 about = "src/pymonorepo/__init__.py"

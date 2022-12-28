@@ -17,6 +17,7 @@ classifiers = [
 ]
 dependencies = [
     "click",
+    "pymonorepo",
 ]
 requires-python = ">=3.7"
 

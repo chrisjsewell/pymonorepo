@@ -11,7 +11,9 @@ name = "pymonorepo-meta"
 version = "0.0.1"
 description = "A monorepo tool for Python"
 readme = "README.md"
-classifiers = []
+classifiers = [
+    "Development Status :: 3 - Alpha",
+]
 dynamic = [
     "license",
     "requires-python",

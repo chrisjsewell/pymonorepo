@@ -1,6 +1,7 @@
 """The main entry module for the PyMonorepo build API."""
 import ast
 import typing as t
+from dataclasses import dataclass
 from functools import reduce
 from pathlib import Path, PurePosixPath
 
@@ -9,6 +10,15 @@ from packaging.requirements import Requirement
 from .pep621 import Author, License, ProjectData, ValidPath
 from .pyproject import PyMetadata, parse_pyproject_toml
 from .wheel import WheelWriter, write_wheel
+
+
+@dataclass
+class Package:
+    """A package in a workspace."""
+
+    path: Path
+    data: ProjectData
+    modules: t.Dict[str, Path]
 
 
 def analyse_workspace(
@@ -33,59 +43,104 @@ def analyse_workspace(
             f"Workspace must have dynamic keys: {required_dynamic}, got {proj_dynamic}"
         )
 
-    # gather all package metadata
-    modules = {}
-    dependencies = []
-    requires_python = []
-    entry_points = {}
-    licenses: t.List[License] = []
+    # read all packages first
+    packages: t.Dict[str, Package] = {}
     for pkg_path in wspace_config.get("packages", []):
+        # TODO check all packages have the same build-backend as the workspace?
         pkg_data, pkg_modules = analyse_project(pkg_path, in_workspace=True)
+        if pkg_data["name"] in packages:
+            other_path = packages[pkg_data["name"]].path
+            raise RuntimeError(
+                f"Duplicate package name: {pkg_data['name']!r} in '{pkg_path}' and '{other_path}'"
+            )
+        packages[pkg_data["name"]] = Package(pkg_path, pkg_data, pkg_modules)
 
-        dependencies.extend(pkg_data.get("dependencies", []))
-        if "requires_python" in pkg_data:
-            requires_python.append(pkg_data["requires_python"])
-        if "entry_points" in pkg_data:
-            for group, points in pkg_data["entry_points"].items():
-                if group not in entry_points:
-                    entry_points[group] = points
-                else:
-                    for name, point in points.items():
-                        if name in entry_points[group]:
-                            raise RuntimeError(
-                                f"Entry point {name} already defined: {point}"
-                            )
-                        entry_points[group][name] = point
-        for license in pkg_data.get("licenses", []):
-            if "path" in license:
-                license_path = pkg_path / license["path"]
-                licenses.append(
-                    {
-                        "path": t.cast(
-                            ValidPath,
-                            PurePosixPath(license_path.relative_to(root).as_posix()),
-                        )
-                    }
+    # collate licence paths
+    licenses: t.List[License] = []
+    for pkg_path, license in [
+        (pkg.path, li)
+        for pkg in packages.values()
+        for li in pkg.data.get("licenses", [])
+    ]:
+        if "path" not in license:
+            continue
+        license_path = pkg_path / license["path"]
+        licenses.append(
+            {
+                "path": t.cast(
+                    ValidPath,
+                    PurePosixPath(license_path.relative_to(root).as_posix()),
                 )
-            elif "text" in license:
-                licenses.append({"text": license["text"]})
+            }
+        )
+    if licenses:
+        proj_config["licenses"] = licenses
 
-        # merge modules and check for conflicts
-        for module_name, module_path in pkg_modules.items():
+    # collate python version requirement
+    requires_python = [
+        pkg.data["requires_python"]
+        for pkg in packages.values()
+        if "requires_python" in pkg.data
+    ]
+    if requires_python:
+        proj_config["requires_python"] = reduce(lambda a, b: a & b, requires_python)
+
+    # collate entry points
+    entry_points: t.Dict[str, t.Dict[str, str]] = {}
+    groups = {
+        name for pkg in packages.values() for name in pkg.data.get("entry_points", {})
+    }
+    for group in groups:
+        # check for conflicts and report the package that defines the conflicting entry point
+        points: t.Dict[str, t.Tuple[str, Path]] = {}
+        for pkg in packages.values():
+            if group not in pkg.data.get("entry_points", {}):
+                continue
+            for point_name, point in pkg.data["entry_points"][group].items():
+                if point_name in points:
+                    other_pkg = points[point_name][1]
+                    raise RuntimeError(
+                        f"Entry point '{group}.{point_name}' defined in both"
+                        f" '{other_pkg}' and '{pkg.path}'"
+                    )
+                points[point_name] = (point, pkg.path)
+        if points:
+            entry_points[group] = {name: point for name, (point, _) in points.items()}
+    if entry_points:
+        proj_config["entry_points"] = entry_points
+
+    # collate modules
+    modules: t.Dict[str, Path] = {}
+    for pkg in packages.values():
+        for module_name, module_path in pkg.modules.items():
             if module_name in modules:
+                other_path = modules[module_name]
                 raise RuntimeError(
-                    f"Module {module_name} already defined: {module_path}"
+                    f"Module {module_name!r} defined in both"
+                    f" '{other_path}' and '{module_path}'"
                 )
             modules[module_name] = module_path
 
+    # collate dependencies
+    dependencies: t.List[Requirement] = []
+    for pkg in packages.values():
+        for dep in pkg.data.get("dependencies", []):
+            if dep.name in packages:
+                if not dep.specifier.contains(packages[dep.name].data["version"]):
+                    raise RuntimeError(
+                        f"Dependency '{dep.name}' version '{dep.specifier}' does not match "
+                        f"workspace version '{packages[dep.name].data['version']!r}': {pkg.path}"
+                    )
+                if dep.extras:
+                    # TODO handle inter-workspace dependency extras
+                    raise NotImplementedError(
+                        f"Inter-workspace dependency '{dep.name}' "
+                        f"has extras '{dep.extras}': {pkg.path}"
+                    )
+            else:
+                dependencies.append(dep)
     if dependencies:
         proj_config["dependencies"] = reduce_dependencies(dependencies)
-    if requires_python:
-        proj_config["requires_python"] = reduce(lambda a, b: a & b, requires_python)
-    if entry_points:
-        proj_config["entry_points"] = entry_points
-    if licenses:
-        proj_config["licenses"] = licenses
 
     return proj_config, modules
 

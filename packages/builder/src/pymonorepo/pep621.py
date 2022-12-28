@@ -71,7 +71,7 @@ class Author(t.TypedDict, total=False):
 
 
 class License(t.TypedDict, total=False):
-    """An author or maintainer."""
+    """A license for the project."""
 
     text: str
     path: ValidPath
