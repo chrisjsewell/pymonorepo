@@ -1,6 +1,6 @@
 """Read the pyproject.toml file, parse and validate it."""
 import typing as t
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 try:
     import tomllib
@@ -61,9 +61,9 @@ class ToolMetadata(t.TypedDict, total=False):
 
 
 class PackageMetadata(t.TypedDict, total=False):
-    module: str
+    module: PurePosixPath
     """The module name of the project, otherwise inferred from the project name."""
-    about: Path
+    about: PurePosixPath
     """Python file to read dynamic info from, otherwise inferred from module."""
 
 
@@ -180,27 +180,48 @@ def parse_package(
     errors: t.List[VError] = []
 
     if "module" in config:
-        if not isinstance(config["module"], str):
-            errors.append(
-                VError(f"tool.{TOOL_SECTION}.module", "type", "must be a string")
-            )
-        else:
-            result["module"] = config["module"]
+        mod_path = _validate_path(
+            config["module"], f"tool.{TOOL_SECTION}.module", root, errors
+        )
+        if mod_path is not None:
+            result["module"] = mod_path
 
     if "about" in config:
-        if not isinstance(config["about"], str):
-            errors.append(
-                VError(f"tool.{TOOL_SECTION}.about", "type", "must be a string")
-            )
-        elif Path(config["about"]).is_absolute():
-            errors.append(
-                VError(
-                    f"tool.{TOOL_SECTION}.about",
-                    "value",
-                    "must be a relative path",
-                )
-            )
-        else:
-            result["about"] = root / Path(config["about"])
+        about_path = _validate_path(
+            config["about"], f"tool.{TOOL_SECTION}.about", root, errors
+        )
+        if about_path is not None:
+            result["about"] = about_path
 
     return result, errors
+
+
+def _validate_path(
+    value: str, key: str, root: Path, errors: t.List[VError]
+) -> t.Optional[PurePosixPath]:
+    """Validate a relative file path from the project root.
+
+    :param value: A relative path.
+    :param key: The key of the path in the project table.
+    :param root: The path to the project root.
+    :param errors: The list of validation errors. to append to.
+    """
+    if not isinstance(value, str):
+        errors.append(VError(key, "type", "must be a string"))
+        return None
+    try:
+        rel_path = PurePosixPath(value)
+    except Exception as exc:
+        errors.append(VError(key, "value", f"invalid path: {exc}"))
+        return None
+    if rel_path.is_absolute():
+        errors.append(VError(key, "value", "path must be relative"))
+        return None
+    if ".." in rel_path.parts:
+        errors.append(VError(key, "value", "path must not contain '..'"))
+        return None
+    full_path = root / rel_path
+    if not full_path.exists():
+        errors.append(VError(key, "value", f"path not found: {full_path}"))
+        return None
+    return rel_path

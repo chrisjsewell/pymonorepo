@@ -179,24 +179,28 @@ def analyse_project(
     pkg_config = tool_config.get("package", {})
 
     # find module
-    module_name = pkg_config.get("module", proj_config["name"].replace("-", "_"))
-    module_path = None
-    for rpath in [root, root / "src"]:
-        for mpath in [rpath / module_name, rpath / (module_name + ".py")]:
+    if "module" in pkg_config:
+        module_path = root / pkg_config["module"]
+        module_name = module_path.name if module_path.is_dir() else module_path.stem
+    else:
+        module_name = proj_config["name"].replace("-", "_")
+        for mpath in [
+            root / module_name,
+            root / "src" / module_name,
+            root / (module_name + ".py"),
+            root / "src" / (module_name + ".py"),
+        ]:
             if mpath.exists():
-                if module_path is not None:
-                    raise RuntimeError(
-                        f"Multiple possible module paths found: {module_path}, {mpath}"
-                    )
                 module_path = mpath
-    if module_path is None:
-        raise RuntimeError(f"Could not find module path for {root}")
+                break
+        else:
+            raise RuntimeError(f"Could not find module path for {root}")
 
     # find dynamic keys, raise if any unsatisfied
     if "dynamic" in proj_config:
         if "about" in pkg_config:
-            mod_info = read_ast_info(pkg_config["about"])
-        if module_path.is_dir():
+            mod_info = read_ast_info(root / pkg_config["about"])
+        elif module_path.is_dir():
             mod_info = read_ast_info(module_path / "__init__.py")
         else:
             mod_info = read_ast_info(module_path)
