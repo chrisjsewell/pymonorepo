@@ -195,6 +195,7 @@ def analyse_project(root: Path, in_workspace: bool = False) -> ProjectAnalysis:
         module_name = module_path.name if module_path.is_dir() else module_path.stem
     else:
         module_name = proj_config["name"].replace("-", "_")
+        module_path = None
         for mpath in [
             root / module_name,
             root / "src" / module_name,
@@ -204,18 +205,18 @@ def analyse_project(root: Path, in_workspace: bool = False) -> ProjectAnalysis:
             if mpath.exists():
                 module_path = mpath
                 break
-        else:
-            # TODO allow for no module
-            raise RuntimeError(f"Could not find module path for {root}")
 
     # find dynamic keys, raise if any unsatisfied
     if "dynamic" in proj_config:
+
         if "about" in pkg_config:
             mod_info = read_ast_info(root / pkg_config["about"])
-        elif module_path.is_dir():
+        elif module_path and module_path.is_dir():
             mod_info = read_ast_info(module_path / "__init__.py")
-        else:
+        elif module_path:
             mod_info = read_ast_info(module_path)
+        else:
+            mod_info = {}
         missing = set(proj_config["dynamic"]) - set(mod_info)  # type: ignore
         if missing:
             raise KeyError(f"Dynamic keys {missing} not found: {root}")
@@ -227,7 +228,7 @@ def analyse_project(root: Path, in_workspace: bool = False) -> ProjectAnalysis:
         root=root,
         project=proj_config,
         tool=tool_config,
-        modules={module_name: module_path},
+        modules={module_name: module_path} if module_path else {},
         is_workspace=False,
     )
 
