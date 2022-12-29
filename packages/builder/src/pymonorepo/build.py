@@ -22,19 +22,17 @@ def build_wheel(
 
     :returns: The basename (not the full path) of the .whl file it creates, as a unicode string.
     """
-    proj_config, modules = analyse_project(root)
+    analysis = analyse_project(root)
 
     with WheelWriter(
         wheel_directory,
-        proj_config["name"],
-        str(proj_config["version"]),
+        analysis.project["name"],
+        str(analysis.project["version"]),
         "py3",
         "none",
         "any",
     ) as wheel:
-        write_wheel(
-            wheel, root, proj_config, modules, editable=editable, meta_only=meta_only
-        )
+        write_wheel(wheel, analysis, editable=editable, meta_only=meta_only)
     return wheel
 
 
@@ -51,5 +49,5 @@ def build_sdist(
 
     :returns: The basename (not the full path) of the .tar.gz file it creates, as a unicode string.
     """
-    # TODO sdist
-    raise NotImplementedError("sdist not yet implemented")
+    _ = analyse_project(root)
+    raise NotImplementedError()

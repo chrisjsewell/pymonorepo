@@ -16,15 +16,13 @@ from textwrap import dedent
 from types import TracebackType
 
 from . import __name__, __version__
+from .analyse import ProjectAnalysis
 from .metadata import create_entrypoints, create_metadata
-from .pep621 import ProjectData
 
 
 def write_wheel(
     whl: "WheelWriter",
-    root: Path,
-    project_data: ProjectData,
-    modules: t.Mapping[str, Path],
+    project: ProjectAnalysis,
     *,
     editable: bool = False,
     meta_only: bool = False,
@@ -37,11 +35,11 @@ def write_wheel(
             # Note, another way to do this is to use the editables hook,
             # https://peps.python.org/pep-0660/#what-to-put-in-the-wheel
             # although more precise, it is not supported in IDEs like VS Code.
-            pth_name = re.sub(r"[-_.]+", "_", project_data["name"]).lower() + ".pth"
-            paths = set(path.absolute().parent for path in modules.values())
+            pth_name = re.sub(r"[-_.]+", "_", project.project["name"]).lower() + ".pth"
+            paths = set(path.absolute().parent for path in project.modules.values())
             whl.write_text([pth_name], "\n".join(str(path) for path in paths))
         else:
-            for _, module in modules.items():
+            for _, module in project.modules.items():
                 if module.is_dir():
                     copy_module_folder(whl, module)
                 elif module.is_file():
@@ -52,18 +50,20 @@ def write_wheel(
         # write license files to dist_info
         # note, there is currently no standard for this, but it will likely be added in:
         # https://peps.python.org/pep-0639
-        for license_file in project_data["licenses"]:
+        for license_file in project.project["licenses"]:
             if "path" in license_file:
-                license_text = root.joinpath(license_file["path"]).read_text("utf-8")
+                license_text = project.root.joinpath(license_file["path"]).read_text(
+                    "utf-8"
+                )
                 license_path = (whl.dist_info, "licenses") + license_file["path"].parts
                 whl.write_text(license_path, license_text)
 
     # write the dist_info (note this is recommended to be last in the file)
     wheel_metadata = whl.get_metadata(f"{__name__} {__version__}")
     whl.write_text((whl.dist_info, "WHEEL"), wheel_metadata)
-    metadata_text = create_metadata(project_data, root)
+    metadata_text = create_metadata(project.project, project.root)
     whl.write_text((whl.dist_info, "METADATA"), metadata_text)
-    entrypoint_text = create_entrypoints(project_data)
+    entrypoint_text = create_entrypoints(project.project)
     if entrypoint_text:
         whl.write_text((whl.dist_info, "entry_points.txt"), entrypoint_text)
 

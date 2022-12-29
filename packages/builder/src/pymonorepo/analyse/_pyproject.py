@@ -7,8 +7,8 @@ try:
 except ImportError:
     import tomli as tomllib  # type: ignore[no-redef]
 
-from .pep621 import ProjectData, VError
-from .pep621 import parse as parse_project
+from ._pep621 import ProjectData, VError
+from ._pep621 import parse as parse_project
 
 TOOL_SECTION = "monorepo"
 

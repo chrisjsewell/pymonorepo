@@ -7,22 +7,27 @@ from pathlib import Path, PurePosixPath
 
 from packaging.requirements import Requirement
 
-from .pep621 import Author, License, ProjectData, ValidPath
-from .pyproject import PyMetadata, parse_pyproject_toml
+from ._pep621 import Author, License, ProjectData, ValidPath
+from ._pyproject import PyMetadata, ToolMetadata, parse_pyproject_toml
 
 
 @dataclass
-class Package:
-    """A package in a workspace."""
+class ProjectAnalysis:
+    """Result of analysing a project."""
 
-    path: Path
-    data: ProjectData
+    root: Path
+    """The root of the project."""
+    is_workspace: bool
+    """Whether the project is a workspace."""
+    project: ProjectData
+    """The resolved project data."""
+    tool: ToolMetadata
+    """The resolved tool.pymonorepo data."""
     modules: t.Dict[str, Path]
+    """The modules in the project."""
 
 
-def analyse_workspace(
-    root: Path, metadata: PyMetadata
-) -> t.Tuple[ProjectData, t.Dict[str, Path]]:
+def analyse_workspace(root: Path, metadata: PyMetadata) -> ProjectAnalysis:
     """Analyse a workspace folder."""
     proj_config = metadata["project"]
     tool_config = metadata["tool"]
@@ -43,23 +48,24 @@ def analyse_workspace(
         )
 
     # read all packages first
-    packages: t.Dict[str, Package] = {}
+    packages: t.Dict[str, ProjectAnalysis] = {}
     for pkg_path in wspace_config.get("packages", []):
         # TODO check all packages have the same build-backend as the workspace?
-        pkg_data, pkg_modules = analyse_project(pkg_path, in_workspace=True)
-        if pkg_data["name"] in packages:
-            other_path = packages[pkg_data["name"]].path
+        analysis = analyse_project(pkg_path, in_workspace=True)
+        if analysis.project["name"] in packages:
+            other_path = packages[analysis.project["name"]].root
             raise RuntimeError(
-                f"Duplicate package name: {pkg_data['name']!r} in '{pkg_path}' and '{other_path}'"
+                f"Duplicate package name: {analysis.project['name']!r} in "
+                f"'{pkg_path}' and '{other_path}'"
             )
-        packages[pkg_data["name"]] = Package(pkg_path, pkg_data, pkg_modules)
+        packages[analysis.project["name"]] = analysis
 
     # collate licence paths
     licenses: t.List[License] = []
     for pkg_path, license in [
-        (pkg.path, li)
+        (pkg.root, li)
         for pkg in packages.values()
-        for li in pkg.data.get("licenses", [])
+        for li in pkg.project.get("licenses", [])
     ]:
         if "path" not in license:
             continue
@@ -77,9 +83,9 @@ def analyse_workspace(
 
     # collate python version requirement
     requires_python = [
-        pkg.data["requires_python"]
+        pkg.project["requires_python"]
         for pkg in packages.values()
-        if "requires_python" in pkg.data
+        if "requires_python" in pkg.project
     ]
     if requires_python:
         proj_config["requires_python"] = reduce(lambda a, b: a & b, requires_python)
@@ -87,22 +93,24 @@ def analyse_workspace(
     # collate entry points
     entry_points: t.Dict[str, t.Dict[str, str]] = {}
     groups = {
-        name for pkg in packages.values() for name in pkg.data.get("entry_points", {})
+        name
+        for pkg in packages.values()
+        for name in pkg.project.get("entry_points", {})
     }
     for group in groups:
         # check for conflicts and report the package that defines the conflicting entry point
         points: t.Dict[str, t.Tuple[str, Path]] = {}
         for pkg in packages.values():
-            if group not in pkg.data.get("entry_points", {}):
+            if group not in pkg.project.get("entry_points", {}):
                 continue
-            for point_name, point in pkg.data["entry_points"][group].items():
+            for point_name, point in pkg.project["entry_points"][group].items():
                 if point_name in points:
                     other_pkg = points[point_name][1]
                     raise RuntimeError(
                         f"Entry point '{group}.{point_name}' defined in both"
-                        f" '{other_pkg}' and '{pkg.path}'"
+                        f" '{other_pkg}' and '{pkg.root}'"
                     )
-                points[point_name] = (point, pkg.path)
+                points[point_name] = (point, pkg.root)
         if points:
             entry_points[group] = {name: point for name, (point, _) in points.items()}
     if entry_points:
@@ -123,25 +131,31 @@ def analyse_workspace(
     # collate dependencies
     dependencies: t.List[Requirement] = []
     for pkg in packages.values():
-        for dep in pkg.data.get("dependencies", []):
+        for dep in pkg.project.get("dependencies", []):
             if dep.name in packages:
-                if not dep.specifier.contains(packages[dep.name].data["version"]):
+                if not dep.specifier.contains(packages[dep.name].project["version"]):
                     raise RuntimeError(
                         f"Dependency '{dep.name}' version '{dep.specifier}' does not match "
-                        f"workspace version '{packages[dep.name].data['version']!r}': {pkg.path}"
+                        f"workspace version '{packages[dep.name].project['version']!r}': {pkg.root}"
                     )
                 if dep.extras:
                     # TODO handle inter-workspace dependency extras
                     raise NotImplementedError(
                         f"Inter-workspace dependency '{dep.name}' "
-                        f"has extras '{dep.extras}': {pkg.path}"
+                        f"has extras '{dep.extras}': {pkg.root}"
                     )
             else:
                 dependencies.append(dep)
     if dependencies:
         proj_config["dependencies"] = reduce_dependencies(dependencies)
 
-    return proj_config, modules
+    return ProjectAnalysis(
+        root=root,
+        project=proj_config,
+        tool=tool_config,
+        modules=modules,
+        is_workspace=True,
+    )
 
 
 def reduce_dependencies(deps: t.List[Requirement]) -> t.List[Requirement]:
@@ -162,9 +176,7 @@ def reduce_dependencies(deps: t.List[Requirement]) -> t.List[Requirement]:
     return list(new_deps.values())
 
 
-def analyse_project(
-    root: Path, in_workspace: bool = False
-) -> t.Tuple[ProjectData, t.Dict[str, Path]]:
+def analyse_project(root: Path, in_workspace: bool = False) -> ProjectAnalysis:
     """Analyse a project folder."""
     metadata = parse_pyproject_toml(root)
     proj_config = metadata["project"]
@@ -193,6 +205,7 @@ def analyse_project(
                 module_path = mpath
                 break
         else:
+            # TODO allow for no module
             raise RuntimeError(f"Could not find module path for {root}")
 
     # find dynamic keys, raise if any unsatisfied
@@ -210,7 +223,13 @@ def analyse_project(
             if dynamic_key in proj_config["dynamic"]:
                 proj_config[dynamic_key] = dynamic_value  # type: ignore
 
-    return proj_config, {module_name: module_path}
+    return ProjectAnalysis(
+        root=root,
+        project=proj_config,
+        tool=tool_config,
+        modules={module_name: module_path},
+        is_workspace=False,
+    )
 
 
 class AstInfo(t.TypedDict, total=False):
