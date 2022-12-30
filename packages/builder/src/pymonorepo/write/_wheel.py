@@ -41,7 +41,12 @@ def write_wheel(
         else:
             for _, module in project.modules.items():
                 if module.is_dir():
-                    copy_module_folder(whl, module)
+                    # Note, the 'build' pypi package may use the sdist to build the wheel,
+                    # in this case we cannot use git to determine the files to include.
+                    # TODO config options to exclude files
+                    for file_path in gather_files(module, allow_non_git=True):
+                        rel_path = file_path.relative_to(module.parent).parts
+                        whl.write_path(rel_path, file_path)
                 elif module.is_file():
                     whl.write_path([module.name], module)
                 else:
@@ -230,7 +235,7 @@ class WheelWriter:
         path: t.Sequence[str],
         text: str,
         encoding: str = "utf-8",
-    ) -> Record:
+    ) -> None:
         """Write text to the wheel.
 
         :param path: The path to write to in the wheel.
@@ -246,13 +251,12 @@ class WheelWriter:
         zinfo.external_attr = 0o644 << 16
         self._zip.writestr(zinfo, content, compress_type=zipfile.ZIP_DEFLATED)
         self._records.append(Record("/".join(path), encode_hash(hashsum), len(content)))
-        return self._records[-1]
 
     def write_path(
         self,
         path: t.Sequence[str],
         source: Path,
-    ) -> Record:
+    ) -> None:
         """Write an external path to the wheel.
 
         :param path: The path to write to in the wheel.
@@ -285,7 +289,6 @@ class WheelWriter:
         self._records.append(
             Record("/".join(path), encode_hash(hashsum), source.stat().st_size)
         )
-        return self._records[-1]
 
 
 def zip_timestamp_from_env() -> t.Optional[t.Tuple[int, int, int, int, int, int]]:
@@ -315,25 +318,3 @@ def encode_hash(hashsum: t.Any) -> str:
     """Encode a hash."""
     hash_digest = urlsafe_b64encode(hashsum.digest()).decode("ascii").rstrip("=")
     return f"{hashsum.name}={hash_digest}"
-
-
-def copy_module_folder(
-    whl: WheelWriter,
-    source: Path,
-) -> t.List[Record]:
-    """Copy a folder to the wheel.
-
-    :source: The path to the folder to copy.
-    :exclude: A list of fnmatch patterns to exclude file/directory names.
-    """
-    records: t.List[Record] = []
-
-    # Note, the 'build' pypi package may use the sdist to build the wheel,
-    # in this case we cannot use git to determine the files to include.
-    # TODO config options to exclude files
-    for file_path in gather_files(source, allow_non_git=True):
-        rel_path = file_path.relative_to(source.parent).parts
-        record = whl.write_path(rel_path, file_path)
-        records.append(record)
-
-    return records
