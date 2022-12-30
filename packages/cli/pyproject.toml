@@ -1,5 +1,5 @@
 [build-system]
-requires = ["packaging>=22", "tomli"]
+requires = ["packaging>=22", "tomli; python_version<'3.11'"]
 build-backend = "pymonorepo.backend"
 backend-path = ["../build/src"]
 

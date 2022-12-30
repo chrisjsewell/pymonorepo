@@ -80,6 +80,8 @@ def prepare_metadata_for_build_wheel(
     :param metadata_directory: The directory in which to place the metadata.
     :param config_settings: A dictionary of configuration settings.
     """
+    # TODO this is a hack, we should build the metadata_directory directly,
+    # then use it in the build_wheel/build_editable hooks.
     with TemporaryDirectory() as path_str:
         path = Path(path_str)
         wheel = build.build_wheel(CWD, path, meta_only=True)
