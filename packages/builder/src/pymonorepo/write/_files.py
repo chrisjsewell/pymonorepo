@@ -22,6 +22,7 @@ def normalize_file_permissions(st_mode: int) -> int:
 def gather_files(
     root: Path,
     *,
+    use_git: bool = True,
     allow_non_git: bool = False,
     user_includes: t.Sequence[str] = (),
     user_excludes: t.Sequence[str] = (),
@@ -36,13 +37,16 @@ def gather_files(
     :return: A list of paths.
     """
     # TODO check this work on Windows?
-    try:
-        files = git_tracked_files(root)
-    except GitError:
-        if allow_non_git:
-            files = {p for p in root.glob("**/*") if p.is_file()}
-        else:
-            raise
+    if use_git:
+        try:
+            files = git_tracked_files(root)
+        except GitError:
+            if allow_non_git:
+                files = {p for p in root.glob("**/*") if p.is_file()}
+            else:
+                raise
+    else:
+        files = {p for p in root.glob("**/*") if p.is_file()}
 
     # add any user includes
     for include in user_includes:

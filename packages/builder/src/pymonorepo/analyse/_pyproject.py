@@ -1,4 +1,5 @@
 """Read the pyproject.toml file, parse and validate it."""
+import re
 import typing as t
 from pathlib import Path, PurePosixPath
 
@@ -58,6 +59,8 @@ class ToolMetadata(t.TypedDict, total=False):
     """The workspace configuration."""
     package: "PackageMetadata"
     """The package configuration."""
+    sdist: "SdistMetadata"
+    """The sdist build configuration."""
 
 
 class PackageMetadata(t.TypedDict, total=False):
@@ -72,6 +75,17 @@ class WorkspaceMetadata(t.TypedDict, total=False):
 
     packages: t.List[Path]
     """The list of packages in the workspace."""
+
+
+class SdistMetadata(t.TypedDict, total=False):
+    """The sdist build configuration."""
+
+    use_git: bool
+    """Whether to use git to determine tracked files (default True)."""
+    include: t.List[str]
+    """The list of additional files to include in the sdist."""
+    exclude: t.List[str]
+    """The list of files to exclude from the sdist."""
 
 
 class ParseToolResult(t.NamedTuple):
@@ -123,6 +137,16 @@ def parse_tool(metadata: t.Dict[str, t.Any], root: Path) -> ParseToolResult:
             presult = parse_package(config["package"], root)
             result.data["package"] = presult[0]
             result.errors.extend(presult[1])
+
+    if "sdist" in config:
+        if not isinstance(config["sdist"], dict):
+            result.errors.append(
+                VError(f"tool.{TOOL_SECTION}.sdist", "type", "must be a table")
+            )
+        else:
+            sresult = parse_sdist(config["sdist"], root)
+            result.data["sdist"] = sresult[0]
+            result.errors.extend(sresult[1])
 
     return result
 
@@ -196,6 +220,52 @@ def parse_package(
     return result, errors
 
 
+def parse_sdist(
+    config: t.Dict[str, t.Any], root: Path
+) -> t.Tuple[SdistMetadata, t.List[VError]]:
+    """Parse the sdist configuration."""
+    result: SdistMetadata = {}
+    errors: t.List[VError] = []
+
+    if "use_git" in config:
+        if not isinstance(config["use_git"], bool):
+            errors.append(
+                VError(f"tool.{TOOL_SECTION}.use_git", "type", "must be a boolean")
+            )
+        else:
+            result["use_git"] = config["use_git"]
+
+    if "include" in config:
+        if not isinstance(config["include"], list):
+            errors.append(
+                VError(f"tool.{TOOL_SECTION}.include", "type", "must be a list")
+            )
+        else:
+            result["include"] = []
+            for idx, path in enumerate(config["include"]):
+                rel_path = _validate_glob(
+                    path, f"tool.{TOOL_SECTION}.include.{idx}", errors
+                )
+                if rel_path is not None:
+                    result["include"].append(rel_path)
+
+    if "exclude" in config:
+        if not isinstance(config["exclude"], list):
+            errors.append(
+                VError(f"tool.{TOOL_SECTION}.exclude", "type", "must be a list")
+            )
+        else:
+            result["exclude"] = []
+            for idx, path in enumerate(config["exclude"]):
+                rel_path = _validate_glob(
+                    path, f"tool.{TOOL_SECTION}.exclude.{idx}", errors
+                )
+                if rel_path is not None:
+                    result["exclude"].append(rel_path)
+
+    return result, errors
+
+
 def _validate_path(
     value: str, key: str, root: Path, errors: t.List[VError]
 ) -> t.Optional[PurePosixPath]:
@@ -225,3 +295,36 @@ def _validate_path(
         errors.append(VError(key, "value", f"path not found: {full_path}"))
         return None
     return rel_path
+
+
+BAD_GLOB_CHARS_RGX = re.compile(r"[\x00-\x1f\x7f]")
+"""Windows filenames can't contain these; https://stackoverflow.com/a/31976060/434217"""
+
+
+def _validate_glob(value: str, key: str, errors: t.List[VError]) -> t.Optional[str]:
+    """Validate a glob pattern.
+
+    :param value: A glob pattern.
+    :param key: The key of the glob in the project table.
+    :param errors: The list of validation errors. to append to.
+    """
+    if not isinstance(value, str):
+        errors.append(VError(key, "type", "must be a string"))
+        return None
+    if BAD_GLOB_CHARS_RGX.search(value):
+        errors.append(VError(key, "value", "glob must not contain control characters"))
+        return None
+    if value.endswith("/"):
+        value += "**/*"
+    try:
+        rel_glob = PurePosixPath(value)
+    except Exception as exc:
+        errors.append(VError(key, "value", f"invalid glob: {exc}"))
+        return None
+    if rel_glob.is_absolute():
+        errors.append(VError(key, "value", "glob must be relative"))
+        return None
+    if ".." in rel_glob.parts:
+        errors.append(VError(key, "value", "glob must not contain '..'"))
+        return None
+    return rel_glob.as_posix()

@@ -17,8 +17,13 @@ from ._metadata import create_metadata
 
 def write_sdist(sdist: "SdistWriter", project: ProjectAnalysis) -> None:
     """Write an sdist."""
-    # TODO config options to turn off git tracked files, include and exclude
-    for file_path in gather_files(project.root):
+    sdist_config = project.tool.get("sdist", {})
+    for file_path in gather_files(
+        project.root,
+        use_git=sdist_config.get("use_git", True),
+        user_includes=sdist_config.get("include", []),
+        user_excludes=sdist_config.get("exclude", []),
+    ):
         rel_path = file_path.relative_to(project.root).parts
         sdist.write_path(rel_path, file_path)
     metadata_text = create_metadata(project.project, project.root)
