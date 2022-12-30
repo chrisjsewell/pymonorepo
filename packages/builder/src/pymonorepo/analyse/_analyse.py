@@ -6,6 +6,7 @@ from functools import reduce
 from pathlib import Path, PurePosixPath
 
 from packaging.requirements import Requirement
+from packaging.utils import NormalizedName
 
 from ._pep621 import Author, License, ProjectData, ValidPath
 from ._pyproject import PyMetadata, ToolMetadata, parse_pyproject_toml
@@ -25,6 +26,16 @@ class ProjectAnalysis:
     """The resolved tool.pymonorepo data."""
     modules: t.Dict[str, Path]
     """The modules in the project."""
+
+    @property
+    def name(self) -> NormalizedName:
+        """The kebab case name of the project."""
+        return self.project["name"]
+
+    @property
+    def snake_name(self) -> str:
+        """The snake case name of the project."""
+        return self.project["name"].replace("-", "_")
 
 
 def analyse_workspace(root: Path, metadata: PyMetadata) -> ProjectAnalysis:
@@ -52,13 +63,13 @@ def analyse_workspace(root: Path, metadata: PyMetadata) -> ProjectAnalysis:
     for pkg_path in wspace_config.get("packages", []):
         # TODO check all packages have the same build-backend as the workspace?
         analysis = analyse_project(pkg_path, in_workspace=True)
-        if analysis.project["name"] in packages:
-            other_path = packages[analysis.project["name"]].root
+        if analysis.name in packages:
+            other_path = packages[analysis.name].root
             raise RuntimeError(
                 f"Duplicate package name: {analysis.project['name']!r} in "
                 f"'{pkg_path}' and '{other_path}'"
             )
-        packages[analysis.project["name"]] = analysis
+        packages[analysis.name] = analysis
 
     # collate licence paths
     licenses: t.List[License] = []

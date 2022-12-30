@@ -10,13 +10,13 @@ import zipfile
 from base64 import urlsafe_b64encode
 from dataclasses import dataclass
 from datetime import datetime
-from fnmatch import fnmatch
 from pathlib import Path
 from textwrap import dedent
 from types import TracebackType
 
 from . import __name__, __version__
 from .analyse import ProjectAnalysis
+from .common import gather_files, normalize_file_permissions
 from .metadata import create_entrypoints, create_metadata
 
 
@@ -35,7 +35,7 @@ def write_wheel(
             # Note, another way to do this is to use the editables hook,
             # https://peps.python.org/pep-0660/#what-to-put-in-the-wheel
             # although more precise, it is not supported in IDEs like VS Code.
-            pth_name = re.sub(r"[-_.]+", "_", project.project["name"]).lower() + ".pth"
+            pth_name = project.snake_name + ".pth"
             paths = set(path.absolute().parent for path in project.modules.values())
             whl.write_text([pth_name], "\n".join(str(path) for path in paths))
         else:
@@ -99,7 +99,7 @@ class WheelWriter:
     def __init__(
         self,
         directory: Path,
-        distribution: str,
+        name: str,
         version: str,
         python: str,
         abi: str,
@@ -111,7 +111,7 @@ class WheelWriter:
         """Initialize.
 
         :param directory: The directory to write to.
-        :param distribution: The distribution name.
+        :param name: The distribution name.
         :param version: The distribution version.
         :param build: The build number.
         :param python: The python version.
@@ -119,7 +119,7 @@ class WheelWriter:
         :param platform: The platform tag.
         """
         self._info = {
-            "distribution": distribution,
+            "name": name,
             "version": version,
             "python": python,
             "abi": abi,
@@ -129,13 +129,13 @@ class WheelWriter:
             self._info["build"] = build
         for key, value in self._info.items():
             self._info[key] = re.sub("[^\w\d.]+", "_", value, re.UNICODE)
-        name = "-".join(
+        file_name = "-".join(
             self._info[key]
-            for key in ("distribution", "version", "build", "python", "abi", "platform")
+            for key in ("name", "version", "build", "python", "abi", "platform")
             if key in self._info
         )
         self._purelib = purelib
-        self._path = directory.joinpath(f"{name}.whl")
+        self._path = directory.joinpath(f"{file_name}.whl")
         self._zip: t.Optional[zipfile.ZipFile] = None
         self._records: t.List[Record] = []
         self._fixed_time_stamp = zip_timestamp_from_env()
@@ -179,14 +179,9 @@ class WheelWriter:
         return self._path
 
     @property
-    def name(self) -> str:
-        """Return the basename of the wheel."""
-        return self._path.name
-
-    @property
     def dist_info(self) -> str:
         """Return dist-info directory name."""
-        return f'{self._info["distribution"]}-{self._info["version"]}.dist-info'
+        return f'{self._info["name"]}-{self._info["version"]}.dist-info'
 
     @property
     def tags(self) -> t.List[str]:
@@ -241,8 +236,6 @@ class WheelWriter:
         :param path: The path to write to in the wheel.
         :param text: The text to write.
         :param encoding: The encoding to use.
-
-        :returns: The byte length and hash of the content.
         """
         if self._zip is None:
             self.raise_not_open()
@@ -264,8 +257,6 @@ class WheelWriter:
 
         :param path: The path to write to in the wheel.
         :param source: The path to write from.
-
-        :returns: The byte length and hash of the content.
         """
         if self._zip is None:
             self.raise_not_open()
@@ -295,20 +286,6 @@ class WheelWriter:
             Record("/".join(path), encode_hash(hashsum), source.stat().st_size)
         )
         return self._records[-1]
-
-
-def normalize_file_permissions(st_mode: int) -> int:
-    """Normalize the permission bits in the st_mode field from stat to 644/755
-
-    Popular VCSs only track whether a file is executable or not. The exact
-    permissions can vary on systems with different umasks. Normalising
-    to 644 (non executable) or 755 (executable) makes builds more reproducible.
-    """
-    # Set 644 permissions, leaving higher bits of st_mode unchanged
-    new_mode = (st_mode | 0o644) & ~0o133
-    if st_mode & 0o100:
-        new_mode |= 0o111  # Executable: 644 -> 755
-    return new_mode
 
 
 def zip_timestamp_from_env() -> t.Optional[t.Tuple[int, int, int, int, int, int]]:
@@ -343,7 +320,6 @@ def encode_hash(hashsum: t.Any) -> str:
 def copy_module_folder(
     whl: WheelWriter,
     source: Path,
-    exclude: t.Sequence[str] = ("__pycache__", "*.pyc"),
 ) -> t.List[Record]:
     """Copy a folder to the wheel.
 
@@ -352,30 +328,12 @@ def copy_module_folder(
     """
     records: t.List[Record] = []
 
-    for file_path in iter_files(source, exclude):
+    # Note, the 'build' pypi package may use the sdist to build the wheel,
+    # in this case we cannot use git to determine the files to include.
+    # TODO config options to exclude files
+    for file_path in gather_files(source, allow_non_git=True):
         rel_path = file_path.relative_to(source.parent).parts
         record = whl.write_path(rel_path, file_path)
         records.append(record)
 
     return records
-
-
-def iter_files(source: Path, exclude: t.Sequence[str]) -> t.Iterable[Path]:
-    """Copy a folder to the wheel.
-
-    :source: The path to the folder to copy.
-    :exclude: A list of fnmatch patterns to exclude file/directory names.
-    """
-
-    def _include(_path: str) -> bool:
-        _name = os.path.basename(_path)
-        return not any(fnmatch(_name, ex) for ex in exclude)
-
-    # Ensure we sort all files and directories so the order is stable
-    for dirpath, dirs, files in os.walk(source):
-        for file in sorted(files):
-            full_path = os.path.join(dirpath, file)
-            if _include(full_path):
-                yield Path(full_path)
-
-        dirs[:] = [d for d in sorted(dirs) if _include(d)]

@@ -38,7 +38,7 @@ def build_wheel(
 
     :returns: The basename (not the full path) of the .whl file it creates, as a unicode string.
     """
-    return build.build_wheel(CWD, Path(wheel_directory)).name
+    return build.build_wheel(CWD, Path(wheel_directory)).path.name
 
 
 def build_sdist(
@@ -52,7 +52,7 @@ def build_sdist(
 
     :returns: The basename (not the full path) of the .tar.gz file it creates, as a unicode string.
     """
-    return build.build_sdist(CWD, Path(sdist_directory), config_settings)
+    return build.build_sdist(CWD, Path(sdist_directory), config_settings).path.name
 
 
 def build_editable(
@@ -69,7 +69,7 @@ def build_editable(
     :returns: The basename (not the full path) of the .whl file it creates.
         The filename for the “editable” wheel needs to be PEP 427 compliant too.
     """
-    return build.build_wheel(CWD, Path(wheel_directory), editable=True).name
+    return build.build_wheel(CWD, Path(wheel_directory), editable=True).path.name
 
 
 def prepare_metadata_for_build_wheel(

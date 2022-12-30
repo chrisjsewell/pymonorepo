@@ -9,6 +9,8 @@ from .analyse import Author, ProjectData
 def create_metadata(project: ProjectData, root: Path) -> str:
     """Create the content for the `METADATA` (wheel) of `PKG_INFO` (sdist) file.
 
+    See: https://peps.python.org/pep-0345/
+
     :project: The project data.
     """
     # required fields

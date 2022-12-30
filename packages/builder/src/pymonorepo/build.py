@@ -3,6 +3,7 @@ import typing as t
 from pathlib import Path
 
 from .analyse import analyse_project
+from .sdist import SdistWriter, write_sdist
 from .wheel import WheelWriter, write_wheel
 
 
@@ -26,7 +27,7 @@ def build_wheel(
 
     with WheelWriter(
         wheel_directory,
-        analysis.project["name"],
+        analysis.snake_name,
         str(analysis.project["version"]),
         "py3",
         "none",
@@ -40,7 +41,7 @@ def build_sdist(
     root: Path,
     sdist_directory: Path,
     config_settings: t.Optional[t.Dict[str, t.Any]] = None,
-) -> str:
+) -> SdistWriter:
     """Build a .tar.gz file, and place it in the specified sdist_directory.
 
     :param root: The root of the project.
@@ -49,5 +50,9 @@ def build_sdist(
 
     :returns: The basename (not the full path) of the .tar.gz file it creates, as a unicode string.
     """
-    _ = analyse_project(root)
-    raise NotImplementedError()
+    analysis = analyse_project(root)
+    with SdistWriter(
+        sdist_directory, analysis.snake_name, str(analysis.project["version"])
+    ) as sdist:
+        write_sdist(sdist, analysis)
+    return sdist
