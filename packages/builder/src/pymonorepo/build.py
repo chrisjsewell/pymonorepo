@@ -3,8 +3,7 @@ import typing as t
 from pathlib import Path
 
 from .analyse import analyse_project
-from .sdist import SdistWriter, write_sdist
-from .wheel import WheelWriter, write_wheel
+from .write import SdistWriter, WheelWriter, write_sdist, write_wheel
 
 
 def build_wheel(

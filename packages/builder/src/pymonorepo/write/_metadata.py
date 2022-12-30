@@ -3,7 +3,7 @@ import typing as t
 from email.headerregistry import Address
 from pathlib import Path
 
-from .analyse import Author, ProjectData
+from ..analyse import Author, ProjectData
 
 
 def create_metadata(project: ProjectData, root: Path) -> str:

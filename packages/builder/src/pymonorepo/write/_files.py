@@ -1,4 +1,4 @@
-"""Common utilities."""
+"""Common utilities for files."""
 import os
 import subprocess
 import typing as t

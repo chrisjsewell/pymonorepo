@@ -14,10 +14,10 @@ from pathlib import Path
 from textwrap import dedent
 from types import TracebackType
 
-from . import __name__, __version__
-from .analyse import ProjectAnalysis
-from .common import gather_files, normalize_file_permissions
-from .metadata import create_entrypoints, create_metadata
+from .. import __name__, __version__
+from ..analyse import ProjectAnalysis
+from ._files import gather_files, normalize_file_permissions
+from ._metadata import create_entrypoints, create_metadata
 
 
 def write_wheel(

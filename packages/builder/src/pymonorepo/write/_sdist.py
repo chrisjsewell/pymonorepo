@@ -10,9 +10,9 @@ from gzip import GzipFile
 from pathlib import Path
 from types import TracebackType
 
-from .analyse import ProjectAnalysis
-from .common import gather_files, normalize_file_permissions
-from .metadata import create_metadata
+from ..analyse import ProjectAnalysis
+from ._files import gather_files, normalize_file_permissions
+from ._metadata import create_metadata
 
 
 def write_sdist(sdist: "SdistWriter", project: ProjectAnalysis) -> None:
