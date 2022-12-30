@@ -100,18 +100,15 @@ class SdistWriter:
             self.raise_not_open()
         return self._tf.getnames()
 
-    def write_text(
-        self, path: t.Sequence[str], text: str, encoding: str = "utf-8"
-    ) -> None:
-        """Write a text file to the sdist.
+    def write_text(self, path: t.Sequence[str], text: str) -> None:
+        """Write a text file to the sdist (with utf8 encoding)
 
         :param path: The path to write to in the sdist.
         :param text: The text to write.
-        :param encoding: The encoding to use.
         """
         if self._tf is None:
             self.raise_not_open()
-        content = text.encode(encoding)
+        content = text.encode("utf-8")
         info = tarfile.TarInfo("/".join((self._dirname, *path)))
         info.size = len(content)
         self._tf.addfile(info, io.BytesIO(content))

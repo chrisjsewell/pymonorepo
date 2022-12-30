@@ -13,11 +13,8 @@ Optional hooks:
 - prepare_metadata_for_build_wheel
 - prepare_metadata_for_build_editable
 """
-import shutil
 import typing as t
-import zipfile
 from pathlib import Path
-from tempfile import TemporaryDirectory
 
 from . import build
 
@@ -38,7 +35,8 @@ def build_wheel(
 
     :returns: The basename (not the full path) of the .whl file it creates, as a unicode string.
     """
-    return build.build_wheel(CWD, Path(wheel_directory)).path.name
+    metadir = Path(metadata_directory) if metadata_directory else None
+    return build.build_wheel(CWD, Path(wheel_directory), metadir).path.name
 
 
 def build_sdist(
@@ -69,7 +67,10 @@ def build_editable(
     :returns: The basename (not the full path) of the .whl file it creates.
         The filename for the “editable” wheel needs to be PEP 427 compliant too.
     """
-    return build.build_wheel(CWD, Path(wheel_directory), editable=True).path.name
+    metadir = Path(metadata_directory) if metadata_directory else None
+    return build.build_wheel(
+        CWD, Path(wheel_directory), metadir, editable=True
+    ).path.name
 
 
 def prepare_metadata_for_build_wheel(
@@ -77,20 +78,12 @@ def prepare_metadata_for_build_wheel(
 ) -> str:
     """Prepare the metadata for a wheel build.
 
-    :param metadata_directory: The directory in which to place the metadata.
+    :param metadata_directory: The directory in which to place the .dist-info directory.
     :param config_settings: A dictionary of configuration settings.
+
+    :returns: The basename (not the full path) of the .dist-info directory it creates.
     """
-    # TODO this is a hack, we should build the metadata_directory directly,
-    # then use it in the build_wheel/build_editable hooks.
-    with TemporaryDirectory() as path_str:
-        path = Path(path_str)
-        wheel = build.build_wheel(CWD, path, meta_only=True)
-        # unpack the wheel to temporary directory
-        with zipfile.ZipFile(wheel.path, mode="r") as zip_file:
-            zip_file.extractall(path)
-        # move the dist-info directory to the metadata directory
-        shutil.move(str(path / wheel.dist_info), metadata_directory)
-    return wheel.dist_info
+    return build.build_wheel_metadata(CWD, Path(metadata_directory)).metadata.dist_info
 
 
 prepare_metadata_for_build_editable = prepare_metadata_for_build_wheel

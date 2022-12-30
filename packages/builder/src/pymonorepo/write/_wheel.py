@@ -14,63 +14,76 @@ from pathlib import Path
 from textwrap import dedent
 from types import TracebackType
 
-from .. import __name__, __version__
 from ..analyse import ProjectAnalysis
 from ._files import gather_files, normalize_file_permissions
 from ._metadata import create_entrypoints, create_metadata
 
 
 def write_wheel(
-    whl: "WheelWriter",
+    writer: "WheelWriterProtocol",
     project: ProjectAnalysis,
     *,
     editable: bool = False,
-    meta_only: bool = False,
 ) -> None:
-    """Write a wheel."""
-    if not meta_only:
+    """Write a wheel.
 
-        # write the python modules
-        if editable:
-            # Note, another way to do this is to use the editables hook,
-            # https://peps.python.org/pep-0660/#what-to-put-in-the-wheel
-            # although more precise, it is not supported in IDEs like VS Code.
-            pth_name = project.snake_name + ".pth"
-            paths = set(path.absolute().parent for path in project.modules.values())
-            whl.write_text([pth_name], "\n".join(str(path) for path in paths))
-        else:
-            for _, module in project.modules.items():
-                if module.is_dir():
-                    # Note, the 'build' pypi package may use the sdist to build the wheel,
-                    # in this case we cannot use git to determine the files to include.
-                    # TODO config options to exclude files
-                    for file_path in gather_files(module, allow_non_git=True):
-                        rel_path = file_path.relative_to(module.parent).parts
-                        whl.write_path(rel_path, file_path)
-                elif module.is_file():
-                    whl.write_path([module.name], module)
-                else:
-                    raise FileNotFoundError(module)
+    :param editable: Whether to build an editable wheel.
+    """
 
-        # write license files to dist_info
-        # note, there is currently no standard for this, but it will likely be added in:
-        # https://peps.python.org/pep-0639
-        for license_file in project.project["licenses"]:
-            if "path" in license_file:
-                license_text = project.root.joinpath(license_file["path"]).read_text(
-                    "utf-8"
-                )
-                license_path = (whl.dist_info, "licenses") + license_file["path"].parts
-                whl.write_text(license_path, license_text)
+    # write the python modules
+    if editable:
+        # Note, another way to do this is to use the editables hook,
+        # https://peps.python.org/pep-0660/#what-to-put-in-the-wheel.
+        # However, although more precise, it is not supported in IDEs like VS Code
+        # (for auto-completion, etc.), so we use the simpler method.
+        pth_name = project.snake_name + ".pth"
+        paths = set(path.absolute().parent for path in project.modules.values())
+        writer.write_text([pth_name], "\n".join(str(path) for path in paths))
+    else:
+        for _, module in project.modules.items():
+            if module.is_dir():
+
+                # Note, as per https://peps.python.org/pep-0517/#build-wheel
+                # > To ensure that wheels from different sources are built the same way,
+                # > frontends may call build_sdist first,
+                # > and then call build_wheel in the unpacked sdist
+                # in this case we must allow for the folder to not be a git repo.
+
+                # TODO config options to include/exclude files in wheel modules,
+                # but they must allow for the behaviour above.
+
+                for file_path in gather_files(module, allow_non_git=True):
+                    rel_path = file_path.relative_to(module.parent).parts
+                    writer.write_path(rel_path, file_path)
+            elif module.is_file():
+                writer.write_path([module.name], module)
+            else:
+                raise FileNotFoundError(module)
 
     # write the dist_info (note this is recommended to be last in the file)
-    wheel_metadata = whl.get_metadata(f"{__name__} {__version__}")
-    whl.write_text((whl.dist_info, "WHEEL"), wheel_metadata)
+    write_wheel_metadata(writer, project)
+
+
+def write_wheel_metadata(
+    writer: "WheelWriterProtocol", project: ProjectAnalysis
+) -> None:
+    """Write the wheel metadata."""
+    dist_info = writer.metadata.dist_info
+    # write license files, note, there is currently no standard for this,
+    # but it will likely be added in: https://peps.python.org/pep-0639
+    for license_file in project.project["licenses"]:
+        if "path" in license_file:
+            license_text = project.root.joinpath(license_file["path"]).read_text(
+                "utf-8"
+            )
+            license_path = (dist_info, "licenses") + license_file["path"].parts
+            writer.write_text(license_path, license_text)
+    writer.write_text((dist_info, "WHEEL"), writer.metadata.text)
     metadata_text = create_metadata(project.project, project.root)
-    whl.write_text((whl.dist_info, "METADATA"), metadata_text)
+    writer.write_text((dist_info, "METADATA"), metadata_text)
     entrypoint_text = create_entrypoints(project.project)
     if entrypoint_text:
-        whl.write_text((whl.dist_info, "entry_points.txt"), entrypoint_text)
+        writer.write_text((dist_info, "entry_points.txt"), entrypoint_text)
 
 
 @dataclass
@@ -92,10 +105,147 @@ class Record:
     """File size in bytes, as a base 10 integer."""
 
 
-WheelWriterType = t.TypeVar("WheelWriterType", bound="WheelWriter")
+@dataclass
+class WheelMetadata:
+    """Wheel metadata, for https://peps.python.org/pep-0427/#file-name-convention"""
+
+    name: str
+    version: str
+    generator: str
+    python: str = "py3"
+    abi: str = "none"
+    arch: str = "any"
+    build: t.Optional[str] = None
+    purelib: bool = True
+
+    def __post_init__(self) -> None:
+        """Post init."""
+        pat = re.compile("[^\w\d.]+", re.UNICODE)
+        name = pat.sub("-", self.name)
+        version = pat.sub("-", self.version)
+        python = pat.sub("-", self.python)
+        abi = pat.sub("-", self.abi)
+        arch = pat.sub("-", self.arch)
+        self._file_name = f"{name}-{version}"
+        if self.build:
+            build = pat.sub("-", self.build)
+            self._file_name += f"-{build}"
+        self._file_name += f"-{python}-{abi}-{arch}.whl"
+        self._dist_info = f"{name}-{version}.dist-info"
+        self._tags = []
+        for x in self.python.split("."):
+            for y in self.abi.split("."):
+                for z in self.arch.split("."):
+                    self._tags.append("-".join((x, y, z)))
+
+    @property
+    def file_name(self) -> str:
+        """Get the file name."""
+        return self._file_name
+
+    @property
+    def dist_info(self) -> str:
+        """Get the dist info directory name."""
+        return self._dist_info
+
+    @property
+    def tags(self) -> t.List[str]:
+        """Compatibility tags, implementing https://www.python.org/dev/peps/pep-0425/."""
+        return self._tags
+
+    @property
+    def text(self) -> str:
+        """Return the text to place in the METADATA file."""
+        content = dedent(
+            f"""\
+        Wheel-Version: 1.0
+        Generator: {self.generator}
+        Root-Is-Purelib: {'true' if self.purelib else 'false'}
+        """
+        )
+        for tag in self.tags:
+            content += f"Tag: {tag}"
+        if self.build:
+            content += f"Build: {self.build}"
+        return content + "\n"
 
 
-class WheelWriter:
+class WheelWriterProtocol(t.Protocol):
+    @property
+    def metadata(self) -> WheelMetadata:
+        """Return the metadata."""
+
+    def write_text(self, path: t.Sequence[str], text: str) -> None:
+        """Write text to the wheel (with utf-8 encoding).
+
+        :param path: The path to write to in the wheel.
+        :param text: The text to write.
+        """
+
+    def write_path(self, path: t.Sequence[str], source: Path) -> None:
+        """Write an external path to the wheel.
+
+        :param path: The path to write to in the wheel.
+        :param source: The path to write from.
+        """
+
+
+class WheelFolderWriter:
+    """A wheel writer, for writing to a folder.
+
+    This is for use by `prepare_metadata_for_build_wheel`
+    """
+
+    def __init__(
+        self,
+        directory: Path,
+        metadata: WheelMetadata,
+    ) -> None:
+        """Initialize.
+
+        :param directory: The directory to write to.
+        :param metadata: The distribution name.
+        """
+        self._metadata = metadata
+        self._path = directory
+        self._path.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def path(self) -> Path:
+        """Return the path to the folder."""
+        return self._path
+
+    @property
+    def metadata(self) -> WheelMetadata:
+        """Return the metadata."""
+        return self._metadata
+
+    def write_text(self, path: t.Sequence[str], text: str) -> None:
+        """Write text to the wheel (with utf-8 encoding).
+
+        :param path: The path to write to in the wheel.
+        :param text: The text to write.
+        """
+        file = self._path.joinpath(*path)
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(text, "utf-8")
+
+    def write_path(self, path: t.Sequence[str], source: Path) -> None:
+        """Write an external path to the wheel.
+
+        :param path: The path to write to in the wheel.
+        :param source: The path to write from.
+        """
+        file = self._path.joinpath(*path)
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_bytes(source.read_bytes())
+
+
+# note, this can be replaced by Self in python 3.11
+SelfType = t.TypeVar("SelfType", bound="WheelZipWriter")
+
+
+class WheelZipWriter:
     """A wheel writer, implementing https://peps.python.org/pep-0427/.
 
     Should be used as a context manager.
@@ -104,43 +254,15 @@ class WheelWriter:
     def __init__(
         self,
         directory: Path,
-        name: str,
-        version: str,
-        python: str,
-        abi: str,
-        platform: str,
-        *,
-        build: t.Optional[str] = None,
-        purelib: bool = True,
+        metadata: WheelMetadata,
     ) -> None:
         """Initialize.
 
         :param directory: The directory to write to.
-        :param name: The distribution name.
-        :param version: The distribution version.
-        :param build: The build number.
-        :param python: The python version.
-        :param abi: The ABI tag.
-        :param platform: The platform tag.
+        :param metadata: The distribution name.
         """
-        self._info = {
-            "name": name,
-            "version": version,
-            "python": python,
-            "abi": abi,
-            "platform": platform,
-        }
-        if build is not None:
-            self._info["build"] = build
-        for key, value in self._info.items():
-            self._info[key] = re.sub("[^\w\d.]+", "_", value, re.UNICODE)
-        file_name = "-".join(
-            self._info[key]
-            for key in ("name", "version", "build", "python", "abi", "platform")
-            if key in self._info
-        )
-        self._purelib = purelib
-        self._path = directory.joinpath(f"{file_name}.whl")
+        self._metadata = metadata
+        self._path = directory.joinpath(metadata.file_name)
         self._zip: t.Optional[zipfile.ZipFile] = None
         self._records: t.List[Record] = []
         self._fixed_time_stamp = zip_timestamp_from_env()
@@ -150,7 +272,7 @@ class WheelWriter:
         """Assert that the zip file is open."""
         raise IOError("Wheel file is not open.")
 
-    def __enter__(self: WheelWriterType) -> WheelWriterType:
+    def __enter__(self: SelfType) -> SelfType:
         """Enter the context manager."""
         self._zip = zipfile.ZipFile(self._path, "w", compression=zipfile.ZIP_DEFLATED)
         return self
@@ -171,12 +293,17 @@ class WheelWriter:
             for record in self.records:
                 record_text += f"{record.path},{record.hash},{record.size}\n"
             # no hash or size for the RECORD file itself
-            record_text += f"{self.dist_info}/RECORD,,\n"
-            self.write_text((self.dist_info, "RECORD"), record_text)
+            record_text += f"{self._metadata.dist_info}/RECORD,,\n"
+            self.write_text((self._metadata.dist_info, "RECORD"), record_text)
             self._records.pop()
 
         self._zip.close()
         self._zip = None
+
+    @property
+    def metadata(self) -> WheelMetadata:
+        """Return the metadata."""
+        return self._metadata
 
     @property
     def path(self) -> Path:
@@ -184,43 +311,9 @@ class WheelWriter:
         return self._path
 
     @property
-    def dist_info(self) -> str:
-        """Return dist-info directory name."""
-        return f'{self._info["name"]}-{self._info["version"]}.dist-info'
-
-    @property
-    def tags(self) -> t.List[str]:
-        """Return the expanded compatibility tags."""
-        # TODO support multiple tags
-        return [f"{self._info['python']}-{self._info['abi']}-{self._info['platform']}"]
-
-    @property
-    def purelib(self) -> bool:
-        """Return whether the wheel is purelib."""
-        return self._purelib
-
-    @property
     def records(self) -> t.List[Record]:
         """Return the records of written files."""
         return self._records
-
-    def get_metadata(self, generator: str) -> str:
-        """Return the metadata, to place in the METADATA file.
-
-        :param generator: The generator name.
-        """
-        wheel_text = dedent(
-            f"""\
-        Wheel-Version: 1.0
-        Generator: {generator}
-        Root-Is-Purelib: {'true' if self.purelib else 'false'}
-        """
-        )
-        for tag in self.tags:
-            wheel_text += f"Tag: {tag}"
-        if self._info.get("build"):
-            wheel_text += f"Build: {self._info['build']}"
-        return wheel_text + "\n"
 
     # methods that require an open zip file
 
@@ -230,21 +323,15 @@ class WheelWriter:
             self.raise_not_open()
         return self._zip.namelist()
 
-    def write_text(
-        self,
-        path: t.Sequence[str],
-        text: str,
-        encoding: str = "utf-8",
-    ) -> None:
-        """Write text to the wheel.
+    def write_text(self, path: t.Sequence[str], text: str) -> None:
+        """Write text to the wheel (with utf-8 encoding).
 
         :param path: The path to write to in the wheel.
         :param text: The text to write.
-        :param encoding: The encoding to use.
         """
         if self._zip is None:
             self.raise_not_open()
-        content = text.encode(encoding)
+        content = text.encode("utf-8")
         hashsum = hashlib.sha256(content)
         time_stamp = self._fixed_time_stamp or (2016, 1, 1, 0, 0, 0)
         zinfo = zipfile.ZipInfo("/".join(path), time_stamp)
@@ -252,11 +339,7 @@ class WheelWriter:
         self._zip.writestr(zinfo, content, compress_type=zipfile.ZIP_DEFLATED)
         self._records.append(Record("/".join(path), encode_hash(hashsum), len(content)))
 
-    def write_path(
-        self,
-        path: t.Sequence[str],
-        source: Path,
-    ) -> None:
+    def write_path(self, path: t.Sequence[str], source: Path) -> None:
         """Write an external path to the wheel.
 
         :param path: The path to write to in the wheel.
