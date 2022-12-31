@@ -160,6 +160,21 @@ def analyse_workspace(root: Path, metadata: PyMetadata) -> ProjectAnalysis:
     if dependencies:
         proj_config["dependencies"] = reduce_dependencies(dependencies)
 
+    # collate sdist include/exclude
+    # TODO deal with sdist.use_git
+    for pkg in packages.values():
+        for clude_name in ("include", "exclude"):
+            cludes: t.List[str] = pkg.tool.get("sdist", {}).get(clude_name, [])  # type: ignore
+            rel_cludes = [
+                (pkg.root.relative_to(root).as_posix() + "/" + clude)
+                for clude in cludes
+            ]
+            if rel_cludes:
+                clude_config = tool_config.setdefault("sdist", {}).setdefault(  # type: ignore
+                    clude_name, []
+                )
+                clude_config.extend(rel_cludes)
+
     return ProjectAnalysis(
         root=root,
         project=proj_config,
