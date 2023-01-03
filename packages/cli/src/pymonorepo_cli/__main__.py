@@ -20,6 +20,8 @@ class DefaultStrEncoder(json.JSONEncoder):
             return dc.asdict(obj)
         if isinstance(obj, tuple):
             return list(obj)
+        if isinstance(obj, set):
+            return list(obj)
         return str(obj)
 
 
