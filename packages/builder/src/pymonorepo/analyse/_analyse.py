@@ -1,7 +1,7 @@
 """Analyse a project"""
 import ast
 import typing as t
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import reduce
 from pathlib import Path, PurePosixPath
 
@@ -26,6 +26,8 @@ class ProjectAnalysis:
     """The resolved tool.pymonorepo data."""
     modules: t.Dict[str, Path]
     """The modules in the project."""
+    graph: t.Dict[str, t.Set[Requirement]] = field(default_factory=dict)
+    """The dependency graph of the workspace."""
 
     @property
     def name(self) -> NormalizedName:
@@ -140,8 +142,10 @@ def analyse_workspace(root: Path, metadata: PyMetadata) -> ProjectAnalysis:
             modules[module_name] = module_path
 
     # collate dependencies
+    package_graph: t.Dict[str, t.Set[Requirement]] = {}
     dependencies: t.List[Requirement] = []
     for pkg in packages.values():
+        package_graph[pkg.name] = set()
         for dep in pkg.project.get("dependencies", []):
             if dep.name in packages:
                 if not dep.specifier.contains(packages[dep.name].project["version"]):
@@ -155,6 +159,7 @@ def analyse_workspace(root: Path, metadata: PyMetadata) -> ProjectAnalysis:
                         f"Inter-workspace dependency '{dep.name}' "
                         f"has extras '{dep.extras}': {pkg.root}"
                     )
+                package_graph[pkg.name].add(dep)
             else:
                 dependencies.append(dep)
     if dependencies:
@@ -181,6 +186,7 @@ def analyse_workspace(root: Path, metadata: PyMetadata) -> ProjectAnalysis:
         tool=tool_config,
         modules=modules,
         is_workspace=True,
+        graph=package_graph,
     )
 
 
