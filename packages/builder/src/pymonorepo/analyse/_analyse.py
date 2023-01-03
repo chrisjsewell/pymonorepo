@@ -8,7 +8,7 @@ from pathlib import Path, PurePosixPath
 from packaging.requirements import Requirement
 from packaging.utils import NormalizedName
 
-from ._pep621 import Author, License, ProjectData, ValidPath
+from ._pep621 import Author, License, PyProjectData, ValidPath
 from ._pyproject import PyMetadata, ToolMetadata, parse_pyproject_toml
 
 
@@ -20,7 +20,7 @@ class ProjectAnalysis:
     """The root of the project."""
     is_workspace: bool
     """Whether the project is a workspace."""
-    project: ProjectData
+    project: PyProjectData
     """The resolved project data."""
     tool: ToolMetadata
     """The resolved tool.pymonorepo data."""

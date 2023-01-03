@@ -8,7 +8,7 @@ try:
 except ImportError:
     import tomli as tomllib  # type: ignore[no-redef]
 
-from ._pep621 import ProjectData, VError
+from ._pep621 import ProjectValidationError, PyProjectData
 from ._pep621 import parse as parse_project
 
 TOOL_SECTION = "monorepo"
@@ -25,7 +25,7 @@ def read_pyproject_toml(path: Path) -> t.Dict[str, t.Any]:
 class PyMetadata(t.TypedDict):
     """The parsed pyproject.toml file."""
 
-    project: ProjectData
+    project: PyProjectData
     tool: "ToolMetadata"
 
 
@@ -38,14 +38,14 @@ def parse_pyproject_toml(root: Path) -> PyMetadata:
     # parse and validate the project configuration
     project_result = parse_project(metadata, root)
     # parse and validate the tool configuration
-    tool_result = parse_tool(metadata, root)
+    tool_result = resolve_tool_section(metadata, root)
 
     errors = project_result.errors + tool_result.errors
     if errors:
         raise RuntimeError(
             "Error(s) parsing {0}:\n{1}".format(
                 pyproject_file,
-                "\n".join(f"- [{e.key}]:{e.etype}: {e.msg}" for e in errors),
+                "\n".join(f"- {e}" for e in errors),
             )
         )
 
@@ -89,29 +89,31 @@ class SdistMetadata(t.TypedDict, total=False):
 
 
 class ParseToolResult(t.NamedTuple):
-    """The parsed tool configuration."""
+    """The resolved [tool.monorepo] table configuration."""
 
     data: ToolMetadata
-    errors: t.List[VError]
+    errors: t.List[ProjectValidationError]
 
 
-def parse_tool(metadata: t.Dict[str, t.Any], root: Path) -> ParseToolResult:
+def resolve_tool_section(metadata: t.Dict[str, t.Any], root: Path) -> ParseToolResult:
     """Parse the tool configuration."""
     result = ParseToolResult({}, [])
 
     tool = metadata.get("tool", {})
     if not isinstance(tool, dict):
-        result.errors.append(VError("tool", "type", "must be a table"))
+        result.errors.append(ProjectValidationError("tool", "type", "must be a table"))
         return result
 
     config = tool.get(TOOL_SECTION, {})
     if not isinstance(config, dict):
-        result.errors.append(VError(f"tool.{TOOL_SECTION}", "type", "must be a table"))
+        result.errors.append(
+            ProjectValidationError(f"tool.{TOOL_SECTION}", "type", "must be a table")
+        )
         return result
 
     if "workspace" in config and "package" in config:
         result.errors.append(
-            VError(
+            ProjectValidationError(
                 f"tool.{TOOL_SECTION}",
                 "key",
                 "cannot contain both 'workspace' and 'package'",
@@ -121,51 +123,61 @@ def parse_tool(metadata: t.Dict[str, t.Any], root: Path) -> ParseToolResult:
     if "workspace" in config:
         if not isinstance(config["workspace"], dict):
             result.errors.append(
-                VError(f"tool.{TOOL_SECTION}.workspace", "type", "must be a table")
+                ProjectValidationError(
+                    f"tool.{TOOL_SECTION}.workspace", "type", "must be a table"
+                )
             )
         else:
-            wresult = parse_workspace(config["workspace"], root)
+            wresult = _resolve_tool_workspace_section(config["workspace"], root)
             result.data["workspace"] = wresult[0]
             result.errors.extend(wresult[1])
 
     if "package" in config:
         if not isinstance(config["package"], dict):
             result.errors.append(
-                VError(f"tool.{TOOL_SECTION}.package", "type", "must be a table")
+                ProjectValidationError(
+                    f"tool.{TOOL_SECTION}.package", "type", "must be a table"
+                )
             )
         else:
-            presult = parse_package(config["package"], root)
+            presult = _resolve_tool_package_section(config["package"], root)
             result.data["package"] = presult[0]
             result.errors.extend(presult[1])
 
     if "sdist" in config:
         if not isinstance(config["sdist"], dict):
             result.errors.append(
-                VError(f"tool.{TOOL_SECTION}.sdist", "type", "must be a table")
+                ProjectValidationError(
+                    f"tool.{TOOL_SECTION}.sdist", "type", "must be a table"
+                )
             )
         else:
-            sresult = parse_sdist(config["sdist"], root)
+            sresult = _resolve_tool_sdist_section(config["sdist"], root)
             result.data["sdist"] = sresult[0]
             result.errors.extend(sresult[1])
 
     return result
 
 
-def parse_workspace(
+def _resolve_tool_workspace_section(
     config: t.Dict[str, t.Any], root: Path
-) -> t.Tuple[WorkspaceMetadata, t.List[VError]]:
+) -> t.Tuple[WorkspaceMetadata, t.List[ProjectValidationError]]:
     """Parse the package configuration."""
     result: WorkspaceMetadata = {}
-    errors: t.List[VError] = []
+    errors: t.List[ProjectValidationError] = []
 
     if not isinstance(config.get("packages", []), list):
-        errors.append(VError(f"tool.{TOOL_SECTION}.packages", "type", "must be a list"))
+        errors.append(
+            ProjectValidationError(
+                f"tool.{TOOL_SECTION}.packages", "type", "must be a list"
+            )
+        )
     elif config.get("packages"):
         result["packages"] = []
         for idx, project in enumerate(config.get("packages", [])):
             if not isinstance(project, str):
                 errors.append(
-                    VError(
+                    ProjectValidationError(
                         f"tool.{TOOL_SECTION}.packages.{idx}",
                         "type",
                         "must be a string",
@@ -174,7 +186,7 @@ def parse_workspace(
                 continue
             if Path(project).is_absolute():
                 errors.append(
-                    VError(
+                    ProjectValidationError(
                         f"tool.{TOOL_SECTION}.packages.{idx}",
                         "value",
                         "must be a relative path",
@@ -184,7 +196,7 @@ def parse_workspace(
             packages = [p for p in root.glob(project) if p.is_dir()]
             if not packages:
                 errors.append(
-                    VError(
+                    ProjectValidationError(
                         f"tool.{TOOL_SECTION}.packages.{idx}",
                         "value",
                         "no matching directories found",
@@ -196,12 +208,12 @@ def parse_workspace(
     return result, errors
 
 
-def parse_package(
+def _resolve_tool_package_section(
     config: t.Dict[str, t.Any], root: Path
-) -> t.Tuple[PackageMetadata, t.List[VError]]:
+) -> t.Tuple[PackageMetadata, t.List[ProjectValidationError]]:
     """Parse the package configuration."""
     result: PackageMetadata = {}
-    errors: t.List[VError] = []
+    errors: t.List[ProjectValidationError] = []
 
     if "module" in config:
         mod_path = _validate_path(
@@ -220,17 +232,19 @@ def parse_package(
     return result, errors
 
 
-def parse_sdist(
+def _resolve_tool_sdist_section(
     config: t.Dict[str, t.Any], root: Path
-) -> t.Tuple[SdistMetadata, t.List[VError]]:
+) -> t.Tuple[SdistMetadata, t.List[ProjectValidationError]]:
     """Parse the sdist configuration."""
     result: SdistMetadata = {}
-    errors: t.List[VError] = []
+    errors: t.List[ProjectValidationError] = []
 
     if "use_git" in config:
         if not isinstance(config["use_git"], bool):
             errors.append(
-                VError(f"tool.{TOOL_SECTION}.use_git", "type", "must be a boolean")
+                ProjectValidationError(
+                    f"tool.{TOOL_SECTION}.use_git", "type", "must be a boolean"
+                )
             )
         else:
             result["use_git"] = config["use_git"]
@@ -238,7 +252,9 @@ def parse_sdist(
     if "include" in config:
         if not isinstance(config["include"], list):
             errors.append(
-                VError(f"tool.{TOOL_SECTION}.include", "type", "must be a list")
+                ProjectValidationError(
+                    f"tool.{TOOL_SECTION}.include", "type", "must be a list"
+                )
             )
         else:
             result["include"] = []
@@ -252,7 +268,9 @@ def parse_sdist(
     if "exclude" in config:
         if not isinstance(config["exclude"], list):
             errors.append(
-                VError(f"tool.{TOOL_SECTION}.exclude", "type", "must be a list")
+                ProjectValidationError(
+                    f"tool.{TOOL_SECTION}.exclude", "type", "must be a list"
+                )
             )
         else:
             result["exclude"] = []
@@ -267,7 +285,7 @@ def parse_sdist(
 
 
 def _validate_path(
-    value: str, key: str, root: Path, errors: t.List[VError]
+    value: str, key: str, root: Path, errors: t.List[ProjectValidationError]
 ) -> t.Optional[PurePosixPath]:
     """Validate a relative file path from the project root.
 
@@ -277,22 +295,26 @@ def _validate_path(
     :param errors: The list of validation errors. to append to.
     """
     if not isinstance(value, str):
-        errors.append(VError(key, "type", "must be a string"))
+        errors.append(ProjectValidationError(key, "type", "must be a string"))
         return None
     try:
         rel_path = PurePosixPath(value)
     except Exception as exc:
-        errors.append(VError(key, "value", f"invalid path: {exc}"))
+        errors.append(ProjectValidationError(key, "value", f"invalid path: {exc}"))
         return None
     if rel_path.is_absolute():
-        errors.append(VError(key, "value", "path must be relative"))
+        errors.append(ProjectValidationError(key, "value", "path must be relative"))
         return None
     if ".." in rel_path.parts:
-        errors.append(VError(key, "value", "path must not contain '..'"))
+        errors.append(
+            ProjectValidationError(key, "value", "path must not contain '..'")
+        )
         return None
     full_path = root / rel_path
     if not full_path.exists():
-        errors.append(VError(key, "value", f"path not found: {full_path}"))
+        errors.append(
+            ProjectValidationError(key, "value", f"path not found: {full_path}")
+        )
         return None
     return rel_path
 
@@ -301,7 +323,9 @@ BAD_GLOB_CHARS_RGX = re.compile(r"[\x00-\x1f\x7f]")
 """Windows filenames can't contain these; https://stackoverflow.com/a/31976060/434217"""
 
 
-def _validate_glob(value: str, key: str, errors: t.List[VError]) -> t.Optional[str]:
+def _validate_glob(
+    value: str, key: str, errors: t.List[ProjectValidationError]
+) -> t.Optional[str]:
     """Validate a glob pattern.
 
     :param value: A glob pattern.
@@ -309,22 +333,28 @@ def _validate_glob(value: str, key: str, errors: t.List[VError]) -> t.Optional[s
     :param errors: The list of validation errors. to append to.
     """
     if not isinstance(value, str):
-        errors.append(VError(key, "type", "must be a string"))
+        errors.append(ProjectValidationError(key, "type", "must be a string"))
         return None
     if BAD_GLOB_CHARS_RGX.search(value):
-        errors.append(VError(key, "value", "glob must not contain control characters"))
+        errors.append(
+            ProjectValidationError(
+                key, "value", "glob must not contain control characters"
+            )
+        )
         return None
     if value.endswith("/"):
         value += "**/*"
     try:
         rel_glob = PurePosixPath(value)
     except Exception as exc:
-        errors.append(VError(key, "value", f"invalid glob: {exc}"))
+        errors.append(ProjectValidationError(key, "value", f"invalid glob: {exc}"))
         return None
     if rel_glob.is_absolute():
-        errors.append(VError(key, "value", "glob must be relative"))
+        errors.append(ProjectValidationError(key, "value", "glob must be relative"))
         return None
     if ".." in rel_glob.parts:
-        errors.append(VError(key, "value", "glob must not contain '..'"))
+        errors.append(
+            ProjectValidationError(key, "value", "glob must not contain '..'")
+        )
         return None
     return rel_glob.as_posix()
