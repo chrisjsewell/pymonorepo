@@ -18,16 +18,12 @@ class ProjectAnalysis:
 
     root: Path
     """The root of the project."""
-    is_workspace: bool
-    """Whether the project is a workspace."""
     project: PyProjectData
-    """The resolved project data."""
+    """The resolved [project] table."""
     tool: ToolMetadata
-    """The resolved tool.pymonorepo data."""
+    """The resolved [tool.monorepo] table."""
     modules: t.Dict[str, Path]
     """The modules in the project."""
-    graph: t.Dict[str, t.Set[Requirement]] = field(default_factory=dict)
-    """The dependency graph of the workspace."""
 
     @property
     def name(self) -> NormalizedName:
@@ -40,7 +36,88 @@ class ProjectAnalysis:
         return self.project["name"].replace("-", "_")
 
 
-def analyse_workspace(root: Path, metadata: PyMetadata) -> ProjectAnalysis:
+@dataclass
+class PackageAnalysis(ProjectAnalysis):
+    """Result of analysing a package."""
+
+
+@dataclass
+class WorkspaceAnalysis(ProjectAnalysis):
+    """Result of analysing a workspace."""
+
+    graph: t.Dict[str, t.Set[Requirement]] = field(default_factory=dict)
+    """The dependency graph of the workspace."""
+
+
+@t.overload
+def analyse_project(
+    root: Path, in_workspace: t.Literal[False] = ...
+) -> ProjectAnalysis:
+    ...
+
+
+@t.overload
+def analyse_project(root: Path, in_workspace: t.Literal[True]) -> PackageAnalysis:
+    ...
+
+
+def analyse_project(root: Path, in_workspace: bool = False) -> ProjectAnalysis:
+    """Analyse a project folder."""
+    metadata = parse_pyproject_toml(root)
+    proj_config = metadata["project"]
+    tool_config = metadata["tool"]
+
+    if "workspace" in tool_config:
+        if in_workspace:
+            raise RuntimeError(f"Workspaces cannot contain other workspaces: {root}")
+        return analyse_workspace(root, metadata)
+
+    pkg_config = tool_config.get("package", {})
+
+    # find module
+    if "module" in pkg_config:
+        module_path = root / pkg_config["module"]
+        module_name = module_path.name if module_path.is_dir() else module_path.stem
+    else:
+        module_name = proj_config["name"].replace("-", "_")
+        module_path = None
+        for mpath in [
+            root / module_name,
+            root / "src" / module_name,
+            root / (module_name + ".py"),
+            root / "src" / (module_name + ".py"),
+        ]:
+            if mpath.exists():
+                module_path = mpath
+                break
+
+    # find dynamic keys, raise if any unsatisfied
+    if "dynamic" in proj_config:
+
+        if "about" in pkg_config:
+            mod_info = read_ast_info(root / pkg_config["about"])
+        elif module_path and module_path.is_dir():
+            mod_info = read_ast_info(module_path / "__init__.py")
+        elif module_path:
+            mod_info = read_ast_info(module_path)
+        else:
+            mod_info = {}
+        missing = set(proj_config["dynamic"]) - set(mod_info)  # type: ignore
+        if missing:
+            raise KeyError(f"Dynamic keys {missing} not found: {root}")
+        for dynamic_key, dynamic_value in mod_info.items():
+            if dynamic_key in proj_config["dynamic"]:
+                proj_config[dynamic_key] = dynamic_value  # type: ignore
+
+    return PackageAnalysis(
+        root=root,
+        project=proj_config,
+        tool=tool_config,
+        modules={module_name: module_path} if module_path else {},
+    )
+
+
+def analyse_workspace(root: Path, metadata: PyMetadata) -> WorkspaceAnalysis:
     """Analyse a workspace folder."""
     proj_config = metadata["project"]
     tool_config = metadata["tool"]
@@ -61,7 +138,7 @@ def analyse_workspace(root: Path, metadata: PyMetadata) -> ProjectAnalysis:
         )
 
     # read all packages first
-    packages: t.Dict[str, ProjectAnalysis] = {}
+    packages: t.Dict[str, PackageAnalysis] = {}
     for pkg_path in wspace_config.get("packages", []):
         # TODO check all packages have the same build-backend as the workspace?
         analysis = analyse_project(pkg_path, in_workspace=True)
@@ -189,88 +266,12 @@ def analyse_workspace(root: Path, metadata: PyMetadata) -> ProjectAnalysis:
                 )
                 clude_config.extend(rel_cludes)
 
-    return ProjectAnalysis(
+    return WorkspaceAnalysis(
         root=root,
         project=proj_config,
         tool=tool_config,
         modules=modules,
-        is_workspace=True,
         graph=package_graph,
-    )
-
-
-def reduce_dependencies(deps: t.List[Requirement]) -> t.List[Requirement]:
-    """Reduce a list of dependencies, compacting duplicates and merging extras/specifiers."""
-    new_deps: t.Dict[t.Hashable, Requirement] = {}
-    for dep in deps:
-        unique = (dep.name, dep.url, dep.marker)
-        if unique not in new_deps:
-            new_deps[unique] = dep
-        else:
-            new_deps[unique].specifier &= dep.specifier
-            new_deps[unique].extras |= dep.extras
-
-    # TODO simplify and validate specifiers
-    # e.g. if '>1,>2' then '>2'
-    # e.g. if '>1,<2' then error
-
-    return list(new_deps.values())
-
-
-def analyse_project(root: Path, in_workspace: bool = False) -> ProjectAnalysis:
-    """Analyse a project folder."""
-    metadata = parse_pyproject_toml(root)
-    proj_config = metadata["project"]
-    tool_config = metadata["tool"]
-
-    if "workspace" in tool_config:
-        if in_workspace:
-            raise RuntimeError(f"Workspaces cannot contain other workspaces: {root}")
-        return analyse_workspace(root, metadata)
-
-    pkg_config = tool_config.get("package", {})
-
-    # find module
-    if "module" in pkg_config:
-        module_path = root / pkg_config["module"]
-        module_name = module_path.name if module_path.is_dir() else module_path.stem
-    else:
-        module_name = proj_config["name"].replace("-", "_")
-        module_path = None
-        for mpath in [
-            root / module_name,
-            root / "src" / module_name,
-            root / (module_name + ".py"),
-            root / "src" / (module_name + ".py"),
-        ]:
-            if mpath.exists():
-                module_path = mpath
-                break
-
-    # find dynamic keys, raise if any unsatisfied
-    if "dynamic" in proj_config:
-
-        if "about" in pkg_config:
-            mod_info = read_ast_info(root / pkg_config["about"])
-        elif module_path and module_path.is_dir():
-            mod_info = read_ast_info(module_path / "__init__.py")
-        elif module_path:
-            mod_info = read_ast_info(module_path)
-        else:
-            mod_info = {}
-        missing = set(proj_config["dynamic"]) - set(mod_info)  # type: ignore
-        if missing:
-            raise KeyError(f"Dynamic keys {missing} not found: {root}")
-        for dynamic_key, dynamic_value in mod_info.items():
-            if dynamic_key in proj_config["dynamic"]:
-                proj_config[dynamic_key] = dynamic_value  # type: ignore
-
-    return ProjectAnalysis(
-        root=root,
-        project=proj_config,
-        tool=tool_config,
-        modules={module_name: module_path} if module_path else {},
-        is_workspace=False,
     )
 
 
@@ -315,3 +316,21 @@ def read_ast_info(path: Path) -> AstInfo:
     if author:
         data["authors"] = [author]
     return t.cast(AstInfo, data)
+
+
+def reduce_dependencies(deps: t.List[Requirement]) -> t.List[Requirement]:
+    """Reduce a list of dependencies, compacting duplicates and merging extras/specifiers."""
+    new_deps: t.Dict[t.Hashable, Requirement] = {}
+    for dep in deps:
+        unique = (dep.name, dep.url, dep.marker)
+        if unique not in new_deps:
+            new_deps[unique] = dep
+        else:
+            new_deps[unique].specifier &= dep.specifier
+            new_deps[unique].extras |= dep.extras
+
+    # TODO simplify and validate specifiers
+    # e.g. if '>1,>2' then '>2'
+    # e.g. if '>1,<2' then error
+
+    return list(new_deps.values())
