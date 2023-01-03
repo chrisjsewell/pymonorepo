@@ -1,8 +1,8 @@
 """Common utilities for files."""
-import os
-import subprocess
 import typing as t
 from pathlib import Path
+
+from pymonorepo import git
 
 
 def normalize_file_permissions(st_mode: int) -> int:
@@ -36,15 +36,16 @@ def gather_files(
 
     :return: A list of paths.
     """
-    # TODO check this work on Windows?
     if use_git:
         try:
-            files = git_tracked_files(root)
-        except GitError:
+            repo = git.GitFolder(root)
+        except git.NotGitRepositoryError:
             if allow_non_git:
                 files = {p for p in root.glob("**/*") if p.is_file()}
             else:
                 raise
+        else:
+            files = repo.tracked_files()
     else:
         files = {p for p in root.glob("**/*") if p.is_file()}
 
@@ -60,30 +61,3 @@ def gather_files(
         for exc in root.glob(exclude):
             files.discard(exc)
     return sorted(files)
-
-
-class GitError(Exception):
-    """Raised when git fails to run."""
-
-
-def git_tracked_files(root: Path) -> t.Set[Path]:
-    """Get all files tracked by git.
-
-    :raises GitError: If git is not installed or if git ls-files fails.
-    """
-    try:
-        outb = subprocess.check_output(
-            ["git", "ls-files", "--recurse-submodules", "-z"],
-            cwd=str(root),
-            stderr=subprocess.PIPE,
-        )
-    except FileNotFoundError:
-        raise GitError("Unable to run git ls-files: git not found")
-    except subprocess.CalledProcessError as exc:
-        raise GitError(f"Unable to run git ls-files in {root}: {exc.stderr.decode()}")
-    # TODO flit raises if any untracked/uncommitted files present that are not excluded, do here?
-    return {
-        root / Path(os.path.normpath(os.fsdecode(loc)))
-        for loc in outb.strip(b"\0").split(b"\0")
-        if loc
-    }
