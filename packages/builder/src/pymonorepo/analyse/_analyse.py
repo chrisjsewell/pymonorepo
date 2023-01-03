@@ -146,6 +146,7 @@ def analyse_workspace(root: Path, metadata: PyMetadata) -> ProjectAnalysis:
     dependencies: t.List[Requirement] = []
     for pkg in packages.values():
         package_graph[pkg.name] = set()
+        pkg_extras = pkg.project.get("optional_dependencies", {})
         for dep in pkg.project.get("dependencies", []):
             if dep.name in packages:
                 if not dep.specifier.contains(packages[dep.name].project["version"]):
@@ -153,12 +154,20 @@ def analyse_workspace(root: Path, metadata: PyMetadata) -> ProjectAnalysis:
                         f"Dependency '{dep.name}' version '{dep.specifier}' does not match "
                         f"workspace version '{packages[dep.name].project['version']!r}': {pkg.root}"
                     )
-                if dep.extras:
-                    # TODO handle inter-workspace dependency extras
-                    raise NotImplementedError(
-                        f"Inter-workspace dependency '{dep.name}' "
-                        f"has extras '{dep.extras}': {pkg.root}"
-                    )
+                for extra in dep.extras:
+                    if extra not in pkg_extras:
+                        raise RuntimeError(
+                            f"Dependency '{dep.name}' extra '{extra}' not defined: {pkg.root}"
+                        )
+                    for extra_dep in pkg_extras[extra]:
+                        if extra_dep.name in packages:
+                            # TODO allow for package dependencies in extras
+                            raise NotImplementedError(
+                                f"Dependency '{dep.name}' extra '{extra}' "
+                                f"contains a package: {pkg.root}"
+                            )
+                        else:
+                            dependencies.append(extra_dep)
                 package_graph[pkg.name].add(dep)
             else:
                 dependencies.append(dep)
