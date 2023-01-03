@@ -8,7 +8,7 @@ from pathlib import Path, PurePosixPath
 from packaging.requirements import Requirement
 from packaging.utils import NormalizedName
 
-from ._pep621 import Author, License, PyProjectData, ValidPath
+from ._pep621 import Author, License, Pep621Data, ValidPath
 from ._pyproject import PyMetadata, ToolMetadata, parse_pyproject_toml
 
 
@@ -18,7 +18,7 @@ class ProjectAnalysis:
 
     root: Path
     """The root of the project."""
-    project: PyProjectData
+    project: Pep621Data
     """The resolved [project] table."""
     tool: ToolMetadata
     """The resolved [tool.monorepo] table."""

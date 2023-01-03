@@ -3,10 +3,10 @@ import typing as t
 from email.headerregistry import Address
 from pathlib import Path
 
-from ..analyse import Author, PyProjectData
+from ..analyse import Author, Pep621Data
 
 
-def create_metadata(project: PyProjectData, root: Path) -> str:
+def create_metadata(project: Pep621Data, root: Path) -> str:
     """Create the content for the `METADATA` (wheel) of `PKG_INFO` (sdist) file.
 
     See: https://peps.python.org/pep-0345/
@@ -76,7 +76,7 @@ def _pep621_people(
     return res
 
 
-def create_entrypoints(project: PyProjectData) -> str:
+def create_entrypoints(project: Pep621Data) -> str:
     """Create the `entry_points.txt` file content.
 
     :project: The project data.

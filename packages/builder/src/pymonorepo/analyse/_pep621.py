@@ -12,7 +12,7 @@ from packaging.utils import NormalizedName, canonicalize_name
 from packaging.version import InvalidVersion, Version
 from packaging.version import parse as parse_version
 
-__all__ = ("parse", "PyProjectData")
+__all__ = ("parse", "Pep621Data")
 
 
 _ALLOWED_FIELDS = {
@@ -85,8 +85,8 @@ class Readme(t.TypedDict, total=False):
     text: str
 
 
-class PyProjectData(t.TypedDict, total=False):
-    """The validated PEP 621 project metadata from the pyproject.toml file."""
+class Pep621Data(t.TypedDict, total=False):
+    """The validated PEP 621 [project] table from the pyproject.toml file."""
 
     name: NormalizedName  # TODO ideally this would be t.Required[NormalizedName] in py3.11
     dynamic: t.List[DYNAMIC_KEY_TYPE]
@@ -125,7 +125,7 @@ class ProjectValidationError(Exception):
 class ParseResult(t.NamedTuple):
     """The result of parsing the pyproject.toml file."""
 
-    data: PyProjectData
+    data: Pep621Data
     errors: t.List[ProjectValidationError]
 
 
@@ -136,7 +136,7 @@ def parse(data: t.Dict[str, t.Any], root: Path) -> ParseResult:
     :param data: The data from the pyproject.toml file.
     :param root: The folder containing the pyproject.toml file.
     """
-    output: PyProjectData = {"name": canonicalize_name("")}
+    output: Pep621Data = {"name": canonicalize_name("")}
     errors: t.List[ProjectValidationError] = []
 
     if "project" not in data:
@@ -539,7 +539,7 @@ def parse(data: t.Dict[str, t.Any], root: Path) -> ParseResult:
 def _parse_readme(
     readme: t.Union[str, t.Dict[str, str]],
     root: Path,
-    output: PyProjectData,
+    output: Pep621Data,
     errors: t.List[ProjectValidationError],
 ) -> None:
     """Parse and validate the project readme.

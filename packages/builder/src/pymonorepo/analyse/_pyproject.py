@@ -8,7 +8,7 @@ try:
 except ImportError:
     import tomli as tomllib  # type: ignore[no-redef]
 
-from ._pep621 import ProjectValidationError, PyProjectData
+from ._pep621 import Pep621Data, ProjectValidationError
 from ._pep621 import parse as parse_project
 
 TOOL_SECTION = "monorepo"
@@ -25,7 +25,7 @@ def read_pyproject_toml(path: Path) -> t.Dict[str, t.Any]:
 class PyMetadata(t.TypedDict):
     """The parsed pyproject.toml file."""
 
-    project: PyProjectData
+    project: Pep621Data
     tool: "ToolMetadata"
 
 
